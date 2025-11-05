@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Page</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+</head>
+<body>
+    <h1>Test Page - Check Console</h1>
+    <div id="game"></div>
+    <script>
+        console.log('Phaser version:', Phaser.VERSION);
+        
+        // Simple test scene
+        class TestScene extends Phaser.Scene {
+            create() {
+                this.add.text(400, 300, 'Phaser is working!', { 
+                    fontSize: '32px', 
+                    color: '#fff' 
+                });
+            }
+        }
+        
+        // Create game
+        new Phaser.Game({
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game',
+            scene: [TestScene]
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,514 @@
+import Phaser from "phaser";
+import {
+  SPRITE_CONFIG,
+  getNPCSpriteFrame,
+  printSpriteLayout,
+} from "./sprite-config";
+
+// Simple runtime check for Tauri without type issues
+const isTauri =
+  typeof window !== "undefined" && (window as any).__TAURI__ !== undefined;
+
+// Dev server URL for browser mode
+const DEV_SERVER_URL = "http://localhost:3001";
+
+// Helper function to safely call Tauri commands
+async function callTauriCommand(command: string): Promise<string> {
+  if (!isTauri) {
+    throw new Error("Tauri commands only available in desktop mode");
+  }
+
+  try {
+    const tauri = (window as any).__TAURI__;
+    if (tauri?.tauri?.invoke) {
+      return await tauri.tauri.invoke(command);
+    }
+    throw new Error("Tauri invoke not available");
+  } catch (e) {
+    throw new Error(`Failed to call Tauri command: ${e}`);
+  }
+}
+
+// Helper function to fetch from dev server (browser mode)
+async function fetchFromDevServer(endpoint: string): Promise<any> {
+  const response = await fetch(`${DEV_SERVER_URL}${endpoint}`);
+  if (!response.ok) {
+    throw new Error(`Dev server error: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+// Get sprite tint based on NPC state
+function getNPCTint(npc: any): number {
+  const avgNeed = (npc.needFood + npc.needSafety) / 2;
+
+  if (avgNeed < 30) return 0xff6666; // Critical - red
+  if (avgNeed < 60) return 0xffff88; // Warning - yellow
+  return 0xffffff; // Healthy - normal
+}
+
+// Get emoji for goal type
+function getGoalEmoji(goalType: string): string {
+  const goalEmojis: { [key: string]: string } = {
+    survival: "🍽️",
+    safety: "🛡️",
+    wealth: "💰",
+    social: "👥",
+    knowledge: "📖",
+    rescue: "🆘",
+    explore: "🗺️",
+    build: "🏗️",
+    trade: "🤝",
+    default: "💭",
+  };
+
+  return goalEmojis[goalType] || goalEmojis.default;
+}
+
+class GameScene extends Phaser.Scene {
+  private statusText?: Phaser.GameObjects.Text;
+  private worldData: any = null;
+  private npcSprites: Map<
+    string,
+    {
+      sprite: Phaser.GameObjects.Sprite;
+      nameText: Phaser.GameObjects.Text;
+      goalText?: Phaser.GameObjects.Text;
+      emotionIcon?: Phaser.GameObjects.Text;
+      barBg: Phaser.GameObjects.Rectangle;
+      barFill: Phaser.GameObjects.Rectangle;
+    }
+  > = new Map();
+  private devServerConnected: boolean = false;
+
+  constructor() {
+    super("GameScene");
+  }
+
+  preload() {
+    console.log("🎨 Loading sprites with configuration:");
+    console.log(`  File: ${SPRITE_CONFIG.fileName}`);
+    console.log(
+      `  Sprite size: ${SPRITE_CONFIG.spriteWidth}x${SPRITE_CONFIG.spriteHeight}`
+    );
+    console.log(
+      `  Sheet layout: ${SPRITE_CONFIG.columns} columns × ${SPRITE_CONFIG.rows} rows`
+    );
+    console.log(
+      `  Total sprites: ${SPRITE_CONFIG.columns * SPRITE_CONFIG.rows}`
+    );
+    console.log(`  Display scale: ${SPRITE_CONFIG.displayScale}x`);
+
+    // Load sprite sheet with configured dimensions
+    this.load.spritesheet("characters", `assets/${SPRITE_CONFIG.fileName}`, {
+      frameWidth: SPRITE_CONFIG.spriteWidth,
+      frameHeight: SPRITE_CONFIG.spriteHeight,
+    });
+
+    // Print full sprite layout to console (useful for debugging)
+    printSpriteLayout();
+  }
+
+  async create() {
+    // Create background
+    this.createBackground();
+
+    // Title
+    this.add.text(20, 20, "🎮 VibeMaster - Living World", {
+      fontSize: "32px",
+      color: "#fff",
+      stroke: "#000",
+      strokeThickness: 4,
+    });
+
+    // Mode indicator
+    const mode = isTauri ? "🖥️ Desktop Mode" : "🌐 Browser Mode (Dev)";
+    this.add.text(20, 60, mode, {
+      fontSize: "14px",
+      color: "#888",
+    });
+
+    // Check dev server connection in browser mode
+    if (!isTauri) {
+      try {
+        await fetchFromDevServer("/health");
+        this.devServerConnected = true;
+        this.add.text(20, 80, "✅ Connected to dev server", {
+          fontSize: "12px",
+          color: "#4f4",
+        });
+      } catch (e) {
+        this.devServerConnected = false;
+        this.add.text(20, 80, "⚠️ Dev server not running", {
+          fontSize: "12px",
+          color: "#f44",
+        });
+      }
+    }
+
+    // Status display
+    this.statusText = this.add.text(20, isTauri ? 100 : 120, "Loading...", {
+      fontSize: "16px",
+      color: "#fff",
+      backgroundColor: "#00000088",
+      padding: { x: 10, y: 10 },
+    });
+
+    // Controls
+    this.createControls();
+
+    // Legend
+    this.add.text(
+      20,
+      700,
+      "💡 Click NPC for details | Middle-click drag to pan",
+      {
+        fontSize: "12px",
+        color: "#888",
+      }
+    );
+
+    // Camera controls
+    this.cameras.main.setBounds(0, 0, 1200, 800);
+
+    // Pan with middle mouse button
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.middleButtonDown()) {
+        this.cameras.main.scrollX -= pointer.velocity.x / 20;
+        this.cameras.main.scrollY -= pointer.velocity.y / 20;
+      }
+    });
+
+    // Update world state every second
+    this.time.addEvent({
+      delay: 1000,
+      callback: () => this.updateWorld(),
+      callbackScope: this,
+      loop: true,
+    });
+
+    // Initial load
+    this.updateWorld();
+  }
+
+  createBackground() {
+    // Simple tiled background
+    const tileSize = 32;
+    const cols = Math.ceil(1200 / tileSize);
+    const rows = Math.ceil(800 / tileSize);
+
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const color = (x + y) % 2 === 0 ? 0x2a3a2a : 0x253525;
+        this.add.rectangle(
+          x * tileSize + tileSize / 2,
+          y * tileSize + tileSize / 2,
+          tileSize,
+          tileSize,
+          color
+        );
+      }
+    }
+  }
+
+  createControls() {
+    const yPos = isTauri ? 180 : 200;
+
+    const startBtn = this.add
+      .text(20, yPos, "▶️ Start", {
+        fontSize: "18px",
+        color: "#0f0",
+        backgroundColor: "#333",
+        padding: { x: 10, y: 5 },
+      })
+      .setInteractive();
+
+    startBtn.on("pointerdown", async () => {
+      try {
+        if (isTauri) {
+          await callTauriCommand("start_simulation");
+          this.statusText?.setText("✅ Simulation started!");
+        } else {
+          this.statusText?.setText("ℹ️ Run: npm run dev");
+        }
+      } catch (e) {
+        console.error("Start error:", e);
+      }
+    });
+
+    const stopBtn = this.add
+      .text(120, yPos, "⏸️ Stop", {
+        fontSize: "18px",
+        color: "#f00",
+        backgroundColor: "#333",
+        padding: { x: 10, y: 5 },
+      })
+      .setInteractive();
+
+    stopBtn.on("pointerdown", async () => {
+      try {
+        if (isTauri) {
+          await callTauriCommand("stop_simulation");
+          this.statusText?.setText("⏸️ Stopped");
+        } else {
+          this.statusText?.setText("ℹ️ Ctrl+C in terminal");
+        }
+      } catch (e) {
+        console.error("Stop error:", e);
+      }
+    });
+  }
+
+  async updateWorld() {
+    try {
+      if (isTauri) {
+        const worldDataStr = await callTauriCommand("get_world_state");
+        this.worldData = JSON.parse(worldDataStr);
+      } else {
+        if (this.devServerConnected) {
+          try {
+            this.worldData = await fetchFromDevServer("/api/world-state");
+          } catch (e) {
+            console.error("Dev server fetch failed:", e);
+            this.worldData = this.getMockData();
+          }
+        } else {
+          this.worldData = this.getMockData();
+        }
+      }
+
+      if (this.worldData) {
+        this.renderWorld();
+      }
+    } catch (e) {
+      console.error("Failed to get world state:", e);
+    }
+  }
+
+  getMockData() {
+    return {
+      currentDay: 16,
+      currentHour: 18,
+      npcs: [
+        {
+          name: "Marcus",
+          occupation: "Blacksmith",
+          needFood: 80,
+          needSafety: 90,
+          needWealth: 60,
+          emotionHappiness: 62,
+          emotionFear: 0,
+          emotionSadness: 100,
+          goals: [{ type: "survival", priority: 80 }],
+        },
+        {
+          name: "Sarah",
+          occupation: "Merchant",
+          needFood: 44,
+          needSafety: 80,
+          needWealth: 40,
+          emotionHappiness: 47,
+          emotionFear: 0,
+          emotionSadness: 100,
+          goals: [{ type: "wealth", priority: 90 }],
+        },
+        {
+          name: "Emma",
+          occupation: "Healer",
+          needFood: 73,
+          needSafety: 85,
+          needWealth: 55,
+          emotionHappiness: 49,
+          emotionFear: 0,
+          emotionSadness: 100,
+          goals: [],
+        },
+      ],
+    };
+  }
+
+  renderWorld() {
+    const { currentDay, currentHour, npcs } = this.worldData;
+
+    let statusText = `📅 Day ${currentDay}, Hour ${currentHour}:00\n\n`;
+    statusText += `👥 ${npcs?.length || 0} NPCs active\n\n`;
+    statusText += "Click an NPC for details";
+
+    this.statusText?.setText(statusText);
+
+    if (npcs && npcs.length > 0) {
+      this.renderNPCs(npcs);
+    }
+  }
+
+  renderNPCs(npcs: any[]) {
+    if (!npcs || npcs.length === 0) return;
+
+    const centerX = 600;
+    const centerY = 400;
+    const radius = 220;
+
+    npcs.forEach((npc: any, index: number) => {
+      const angle = (index / npcs.length) * Math.PI * 2 - Math.PI / 2;
+      const x = centerX + Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+
+      let npcVisual = this.npcSprites.get(npc.name);
+
+      if (!npcVisual) {
+        // Get frame number from sprite config
+        const frame = getNPCSpriteFrame(npc.occupation);
+
+        // Log for debugging
+        console.log(
+          `Creating sprite for ${npc.name} (${npc.occupation}) → Frame ${frame}`
+        );
+
+        // Create sprite with configured scale
+        const sprite = this.add.sprite(x, y, "characters", frame);
+        sprite.setScale(SPRITE_CONFIG.displayScale);
+
+        // Make interactive
+        sprite.setInteractive();
+        sprite.on("pointerdown", () => this.onNPCClick(npc));
+        sprite.on("pointerover", () => {
+          sprite.setScale(SPRITE_CONFIG.displayScale * 1.2);
+        });
+        sprite.on("pointerout", () => {
+          sprite.setScale(SPRITE_CONFIG.displayScale);
+        });
+
+        // Name label
+        const nameText = this.add
+          .text(x, y - 35, npc.name, {
+            fontSize: "14px",
+            color: "#fff",
+            fontStyle: "bold",
+            stroke: "#000",
+            strokeThickness: 3,
+          })
+          .setOrigin(0.5);
+
+        // Goal emoji
+        const goalText = this.add
+          .text(x, y - 50, "", {
+            fontSize: "20px",
+          })
+          .setOrigin(0.5);
+
+        // Emotion icon
+        const emotionIcon = this.add
+          .text(x + 25, y - 15, "", {
+            fontSize: "16px",
+          })
+          .setOrigin(0.5);
+
+        // Health bar
+        const barBg = this.add.rectangle(x, y + 30, 60, 4, 0x333333);
+        const barFill = this.add.rectangle(x, y + 30, 60, 4, 0x00ff00);
+
+        npcVisual = { sprite, nameText, goalText, emotionIcon, barBg, barFill };
+        this.npcSprites.set(npc.name, npcVisual);
+      } else {
+        // Update existing sprite
+        npcVisual.sprite.setPosition(x, y);
+        npcVisual.nameText.setPosition(x, y - 35);
+        npcVisual.goalText?.setPosition(x, y - 50);
+        npcVisual.emotionIcon?.setPosition(x + 25, y - 15);
+        npcVisual.barBg.setPosition(x, y + 30);
+        npcVisual.barFill.setPosition(x, y + 30);
+
+        // Update frame if occupation changed
+        npcVisual.sprite.setFrame(getNPCSpriteFrame(npc.occupation));
+      }
+
+      // Apply tint
+      npcVisual.sprite.setTint(getNPCTint(npc));
+
+      // Update goal
+      if (npc.goals && npc.goals.length > 0) {
+        npcVisual.goalText?.setText(getGoalEmoji(npc.goals[0].type));
+      } else {
+        npcVisual.goalText?.setText("");
+      }
+
+      // Update emotion
+      let emotionEmoji = "";
+      if (npc.emotionSadness > 80) emotionEmoji = "😢";
+      else if (npc.emotionFear > 80) emotionEmoji = "😰";
+      else if (npc.emotionHappiness > 80) emotionEmoji = "😄";
+      npcVisual.emotionIcon?.setText(emotionEmoji);
+
+      // Update health bar
+      const avgNeed = (npc.needFood + npc.needSafety) / 2;
+      const barWidth = 60;
+      const fillWidth = (avgNeed / 100) * barWidth;
+      npcVisual.barFill.setDisplaySize(fillWidth, 4);
+      npcVisual.barFill.x = x - (barWidth - fillWidth) / 2;
+
+      let barColor: number;
+      if (avgNeed > 70) barColor = 0x00ff00;
+      else if (avgNeed > 40) barColor = 0xffaa00;
+      else barColor = 0xff0000;
+      npcVisual.barFill.setFillStyle(barColor);
+
+      // Pulse if critical
+      if (avgNeed < 30) {
+        this.tweens.add({
+          targets: npcVisual.sprite,
+          scale: SPRITE_CONFIG.displayScale * 1.1,
+          duration: 400,
+          yoyo: true,
+          repeat: 0,
+        });
+      }
+    });
+  }
+
+  onNPCClick(npc: any) {
+    console.log("Clicked NPC:", npc);
+
+    const avgNeed = (npc.needFood + npc.needSafety) / 2;
+    let info = `📋 ${npc.name}\n\n`;
+    info += `Occupation: ${npc.occupation || "Villager"}\n`;
+    info += `Health: ${Math.round(avgNeed)}%\n\n`;
+    info += `Needs:\n`;
+    info += `  🍽️ Food: ${npc.needFood}%\n`;
+    info += `  🛡️ Safety: ${npc.needSafety}%\n`;
+    info += `  💰 Wealth: ${npc.needWealth}%\n\n`;
+    info += `Emotions:\n`;
+    info += `  😊 Happy: ${npc.emotionHappiness}%\n`;
+    info += `  😢 Sad: ${npc.emotionSadness}%\n`;
+    info += `  😰 Fear: ${npc.emotionFear}%\n`;
+
+    if (npc.goals && npc.goals.length > 0) {
+      info += `\n🎯 Goals:\n`;
+      npc.goals.slice(0, 3).forEach((goal: any) => {
+        info += `  ${getGoalEmoji(goal.type)} ${goal.type} (${
+          goal.priority
+        })\n`;
+      });
+    }
+
+    this.statusText?.setText(info);
+  }
+}
+
+// Phaser game configuration
+const config: Phaser.Types.Core.GameConfig = {
+  type: Phaser.AUTO,
+  width: 1200,
+  height: 800,
+  parent: "game",
+  backgroundColor: "#1a1a2e",
+  scene: [GameScene],
+  pixelArt: true, // Critical for crisp sprites!
+  antialias: false,
+};
+
+// Start Phaser
+window.addEventListener("DOMContentLoaded", () => {
+  console.log("🎮 Starting VibeMaster with 16x16 Sprites...");
+  console.log("Mode:", isTauri ? "Tauri Desktop" : "Browser Development");
+  new Phaser.Game(config);
+});

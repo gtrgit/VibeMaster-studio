@@ -1,0 +1,319 @@
+// Prisma Schema for VibeMaster World Simulation
+// Database: SQLite (can easily migrate to PostgreSQL later)
+// Last updated: November 2, 2025
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// WORLD STATE
+// ============================================================================
+
+model World {
+  id          String   @id @default(cuid())
+  name        String
+  currentDay  Int      @default(0)
+  currentHour Int      @default(8)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  npcs      NPC[]
+  locations Location[]
+  events    Event[]
+  factions  Faction[]
+}
+
+// ============================================================================
+// NPCs - The Heart of the Simulation
+// ============================================================================
+
+model NPC {
+  id       String @id @default(cuid())
+  worldId  String
+  world    World  @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  // Identity
+  name       String
+  age        Int
+  occupation String
+  state      String @default("alive") // alive, injured, kidnapped, dead
+
+  // Location
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id])
+
+  // Personality Traits (0-100)
+  openness            Int @default(50)
+  conscientiousness   Int @default(50)
+  extraversion        Int @default(50)
+  agreeableness       Int @default(50)
+  neuroticism         Int @default(50)
+
+  // Values and Fears (JSON arrays)
+  values String @default("[]") // ["honesty", "family", "wealth"]
+  fears  String @default("[]") // ["death", "poverty", "abandonment"]
+
+  // Speech Pattern (0-100)
+  formality            Int    @default(50)
+  verbosity            Int    @default(50)
+  emotionalExpression  Int    @default(50)
+  dialect              String @default("")
+  speechQuirks         String @default("[]") // ["uses metaphors", "stutters"]
+
+  // Needs (0-100)
+  needFood    Int @default(100)
+  needSafety  Int @default(100)
+  needWealth  Int @default(50)
+  needSocial  Int @default(50)
+  needPurpose Int @default(50)
+
+  // Emotions (0-100)
+  emotionHappiness     Int @default(50)
+  emotionAnger         Int @default(0)
+  emotionFear          Int @default(0)
+  emotionSadness       Int @default(0)
+  emotionTrust         Int @default(50)
+  emotionAnticipation  Int @default(30)
+
+  // Derived Emotions (calculated)
+  emotionLove        Int @default(0) // happiness + trust
+  emotionDesperation Int @default(0) // fear + sadness + low needs
+  emotionGrief       Int @default(0) // sadness + low social
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  goals               Goal[]
+  memories            Memory[]
+  relationshipsFrom   Relationship[] @relation("RelationshipFrom")
+  relationshipsTo     Relationship[] @relation("RelationshipTo")
+  eventsAsParticipant Event[]        @relation("EventParticipants")
+  eventsAsTarget      Event[]        @relation("EventTarget")
+  scheduleEntries     Schedule[]
+
+  @@index([worldId])
+  @@index([locationId])
+}
+
+// ============================================================================
+// GOALS - What NPCs Want
+// ============================================================================
+
+model Goal {
+  id     String @id @default(cuid())
+  npcId  String
+  npc    NPC    @relation(fields: [npcId], references: [id], onDelete: Cascade)
+
+  type       String // survival, rescue, revenge, romance, wealth, power, knowledge, escape
+  target     String @default("") // NPC id, location id, or item name
+  priority   Int    @default(50) // 0-100
+  urgent     Boolean @default(false)
+  desperate  Boolean @default(false)
+  deadline   Int?   // day number when goal expires
+  completed  Boolean @default(false)
+  failed     Boolean @default(false)
+
+  // Plan (JSON array of actions)
+  plan      String @default("[]")
+  obstacles String @default("[]") // What's blocking this goal
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([npcId])
+}
+
+// ============================================================================
+// RELATIONSHIPS - How NPCs Feel About Each Other
+// ============================================================================
+
+model Relationship {
+  id String @id @default(cuid())
+
+  fromNpcId String
+  fromNpc   NPC    @relation("RelationshipFrom", fields: [fromNpcId], references: [id], onDelete: Cascade)
+
+  toNpcId String
+  toNpc   NPC    @relation("RelationshipTo", fields: [toNpcId], references: [id], onDelete: Cascade)
+
+  // Relationship Values (-100 to 100)
+  value     Int @default(0)   // Overall relationship
+  trust     Int @default(0)   // Can I rely on them?
+  affection Int @default(0)   // Do I like them?
+  respect   Int @default(0)   // Do I admire them?
+  grudge    Int @default(0)   // Do I resent them?
+  fear      Int @default(0)   // Am I afraid of them?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromNpcId, toNpcId])
+  @@index([fromNpcId])
+  @@index([toNpcId])
+}
+
+// ============================================================================
+// MEMORIES - NPCs Remember Events
+// ============================================================================
+
+model Memory {
+  id    String @id @default(cuid())
+  npcId String
+  npc   NPC    @relation(fields: [npcId], references: [id], onDelete: Cascade)
+
+  day             Int
+  event           String // Description of what happened
+  emotion         String // How they felt
+  emotionalImpact Int    @default(50) // 0-100, how significant
+  involvedNpcs    String @default("[]") // NPC ids involved
+
+  createdAt DateTime @default(now())
+
+  @@index([npcId])
+  @@index([day])
+}
+
+// ============================================================================
+// EVENTS - Things That Happen in the World
+// ============================================================================
+
+model Event {
+  id      String @id @default(cuid())
+  worldId String
+  world   World  @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  day  Int
+  hour Int
+
+  type        String // kidnapping, murder, theft, discovery, conversation, etc.
+  description String
+  locationId  String
+
+  // Participants
+  participants NPC[] @relation("EventParticipants")
+
+  // Target (if applicable)
+  targetId String?
+  target   NPC?    @relation("EventTarget", fields: [targetId], references: [id])
+
+  // Metadata
+  resolved      Boolean @default(false)
+  consequences  String  @default("[]") // JSON array of consequences
+  dramaticValue Int     @default(50)   // How narratively interesting (0-100)
+
+  createdAt DateTime @default(now())
+
+  @@index([worldId])
+  @@index([day])
+  @@index([type])
+}
+
+// ============================================================================
+// LOCATIONS - Where Things Happen
+// ============================================================================
+
+model Location {
+  id      String @id @default(cuid())
+  worldId String
+  world   World  @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String
+  type        String @default("building") // building, outdoor, dungeon, etc.
+
+  // Resources available
+  hasFood   Boolean @default(false)
+  hasShelter Boolean @default(true)
+  isPublic  Boolean @default(true)
+  isDangerous Boolean @default(false)
+  dangerLevel Int     @default(0) // 0-100
+
+  npcs NPC[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([worldId])
+}
+
+// ============================================================================
+// SCHEDULE - NPC Daily Routines
+// ============================================================================
+
+model Schedule {
+  id    String @id @default(cuid())
+  npcId String
+  npc   NPC    @relation(fields: [npcId], references: [id], onDelete: Cascade)
+
+  hour       Int    // 0-23
+  activity   String // work, sleep, eat, socialize, etc.
+  locationId String // Where they should be
+
+  createdAt DateTime @default(now())
+
+  @@index([npcId])
+  @@index([hour])
+}
+
+// ============================================================================
+// FACTIONS - Groups with Goals
+// ============================================================================
+
+model Faction {
+  id      String @id @default(cuid())
+  worldId String
+  world   World  @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  name        String
+  type        String @default("neutral") // guild, government, criminal, religious
+  memberIds   String @default("[]")      // NPC ids
+  leaderIds   String @default("[]")      // NPC ids
+
+  // Faction State
+  wealth    Int @default(50)  // 0-100
+  power     Int @default(50)  // 0-100
+  influence Int @default(50)  // 0-100
+
+  // Faction Relationships (JSON object: {factionId: value})
+  relationships String @default("{}")
+
+  // Goals (JSON array)
+  goals String @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([worldId])
+}
+
+// ============================================================================
+// PLAYER STATE - What the Player Has Done
+// ============================================================================
+
+model Player {
+  id String @id @default(cuid())
+
+  name       String
+  reputation Int    @default(50) // 0-100
+
+  // Relationships with NPCs (JSON object: {npcId: value})
+  relationships String @default("{}")
+
+  // Quest State (JSON array)
+  activeQuests    String @default("[]")
+  completedQuests String @default("[]")
+  failedQuests    String @default("[]")
+
+  // Choices Made (JSON array of choice objects)
+  recentChoices String @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

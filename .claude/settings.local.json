@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(npm install)",
+      "Bash(cp:*)",
+      "Bash(npx prisma:*)",
+      "Bash(mkdir:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tauri:*)",
+      "Bash(rustc --version)",
+      "Bash(node:*)",
+      "Bash(sudo apt:*)",
+      "Bash(sudo apt install:*)",
+      "Bash(npm --version)",
+      "Bash(cargo --version)",
+      "Bash(sqlite3:*)",
+      "Bash(cargo install:*)",
+      "Bash(npm i:*)",
+      "Bash(npx @tauri-apps/cli icon:*)",
+      "Bash(# Create placeholder PNG files using ImageMagick convert or a simple method\nfor size in 32x32 128x128 128x128@2x; do\n  if [[ \"\"$size\"\" == *\"\"@2x\"\"* ]]; then\n    # For @2x, use 256x256\n    echo \"\"Creating 256x256 icon as $size.png\"\"\n    # Create a simple colored square using base64 encoded PNG\n    echo \"\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==\"\" | base64 -d > \"\"src-tauri/icons/$size.png\"\"\n  else\n    # For regular sizes\n    dimensions=\"\"${size%x*}\"\"\n    echo \"\"Creating $size icon\"\"\n    echo \"\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==\"\" | base64 -d > \"\"src-tauri/icons/$size.png\"\"\n  fi\ndone\n\n# Create ICO file (Windows)\necho \"\"Creating icon.ico\"\"\necho \"\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==\"\" | base64 -d > src-tauri/icons/icon.ico\n\n# Create ICNS file (macOS) - just use same PNG data for now\necho \"\"Creating icon.icns\"\"\necho \"\"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==\"\" | base64 -d > src-tauri/icons/icon.icns\n\nls -la src-tauri/icons/)",
+      "Bash(touch:*)",
+      "Bash(pkill:*)",
+      "Bash(curl:*)",
+      "Bash(rm:*)",
+      "Bash(git stash push:*)",
+      "Bash(git stash:*)",
+      "Bash(npx tsc:*)"
+    ],
+    "deny": []
+  }
+}

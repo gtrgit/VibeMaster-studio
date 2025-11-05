@@ -1,0 +1,12 @@
+﻿{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "files.autoSave": "onFocusChange",
+  "liveServer.settings.port": 5500,
+  "liveServer.settings.CustomBrowser": "chrome",
+  "html.format.indentInnerHtml": true,
+  "css.validate": true,
+  "javascript.validate.enable": true
+}

@@ -1,0 +1,121 @@
+// SIMPLE-TEST.ts - Ultra-simple sprite sheet tester
+// Copy this to src/main.ts temporarily to debug your sprite sheet
+
+import Phaser from "phaser";
+
+class TestScene extends Phaser.Scene {
+  preload() {
+    console.log("🔍 Loading sprite sheet...");
+
+    // Load as normal image first
+    this.load.image("sheet-test", "assets/npc-1.png");
+
+    // Try loading as spritesheet with YOUR values
+    // ⚠️ CHANGE THESE VALUES TO MATCH YOUR SPRITE SHEET:
+    this.load.spritesheet("characters", "assets/npc-1.png", {
+      frameWidth: 46.33, // ← Width of ONE sprite
+      frameHeight: 46.33, // ← Height of ONE sprite
+    });
+  }
+
+  create() {
+    // Get actual image dimensions
+    const img = this.textures.get("sheet-test").getSourceImage();
+    console.log("📏 Image dimensions:", img.width, "x", img.height, "pixels");
+
+    // Calculate what config SHOULD be
+    const frameWidth = 46.33; // ← YOUR sprite width
+    const frameHeight = 46.33; // ← YOUR sprite height
+    const cols = Math.floor(img.width / frameWidth);
+    const rows = Math.floor(img.height / frameHeight);
+    const total = cols * rows;
+
+    console.log("📊 Calculated configuration:");
+    console.log("  columns:", cols);
+    console.log("  rows:", rows);
+    console.log("  Total frames:", total);
+
+    // Check how many frames Phaser loaded
+    const texture = this.textures.get("characters");
+    const loadedFrames = texture.frameTotal - 1;
+    console.log("✅ Phaser loaded:", loadedFrames, "frames");
+
+    // Title
+    this.add.text(20, 20, "Sprite Sheet Tester", {
+      fontSize: "24px",
+      color: "#fff",
+      backgroundColor: "#333",
+      padding: { x: 10, y: 5 },
+    });
+
+    // Show info
+    this.add.text(
+      20,
+      70,
+      [
+        `Image: ${img.width}x${img.height}px`,
+        `Sprite size: ${frameWidth}x${frameHeight}px`,
+        `Should be: ${cols} columns × ${rows} rows = ${total} frames`,
+        `Phaser loaded: ${loadedFrames} frames`,
+        "",
+        loadedFrames === total
+          ? "✅ Configuration is CORRECT!"
+          : "❌ Configuration is WRONG!",
+        "",
+        "Sprites below:",
+      ],
+      {
+        fontSize: "16px",
+        color: "#fff",
+        lineSpacing: 5,
+      }
+    );
+
+    // Display all available frames
+    let count = 0;
+    for (let i = 0; i < loadedFrames; i++) {
+      const x = 100 + (i % 10) * 70;
+      const y = 250 + Math.floor(i / 10) * 70;
+
+      try {
+        this.add.sprite(x, y, "characters", i).setScale(3);
+        this.add
+          .text(x, y + 30, `${i}`, {
+            fontSize: "12px",
+            color: "#fff",
+            backgroundColor: "#000",
+            padding: { x: 3, y: 2 },
+          })
+          .setOrigin(0.5);
+        count++;
+      } catch (e) {
+        console.error(`Frame ${i} failed:`, e);
+      }
+    }
+
+    console.log("");
+    console.log("📝 TO FIX YOUR CODE:");
+    console.log("In sprite-config.ts, set:");
+    console.log(`  columns: ${cols}`);
+    console.log(`  rows: ${rows}`);
+    console.log("");
+    console.log("Then map occupations to frames 0 through", total - 1);
+  }
+}
+
+const config: Phaser.Types.Core.GameConfig = {
+  type: Phaser.AUTO,
+  width: 1200,
+  height: 800,
+  parent: "game",
+  backgroundColor: "#1a1a2e",
+  scene: [TestScene],
+  pixelArt: true,
+  antialias: false,
+};
+
+window.addEventListener("DOMContentLoaded", () => {
+  console.log("🎮 Starting Sprite Sheet Tester...");
+  console.log("Check the console and screen for results!");
+  new Phaser.Game(config);
+});

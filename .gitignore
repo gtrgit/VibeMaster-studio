@@ -1,0 +1,25 @@
+# RUST / TAURI BUILD FILES
+src-tauri/target/
+**/target/
+*.so
+*.rlib
+*.pdb
+*.exe
+
+# DATABASES
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# NODE
+node_modules/
+
+# ENVIRONMENT
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

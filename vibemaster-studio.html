@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎙️ VibeMaster Studio - Voice-Driven Game Creation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 25px;
+            border: 2px solid #e9ecef;
+        }
+
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn {
+            padding: 15px 30px;
+            font-size: 16px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-weight: 500;
+        }
+
+        .status-idle {
+            background: #e9ecef;
+            color: #6c757d;
+        }
+
+        .status-recording {
+            background: #ff4757;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-processing {
+            background: #ffa502;
+            color: white;
+        }
+
+        .status-success {
+            background: #2ed573;
+            color: white;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .transcription-box {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 15px;
+            min-height: 100px;
+            margin-bottom: 15px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+
+        .scene-editor {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 400px;
+        }
+
+        .object-card {
+            background: #f8f9fa;
+            border: 2px solid #dee2e6;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .object-card:hover {
+            border-color: #667eea;
+            transform: translateX(5px);
+        }
+
+        .object-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .object-card p {
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .input-group {
+            margin-bottom: 15px;
+        }
+
+        .input-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #495057;
+        }
+
+        .input-group input,
+        .input-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e9ecef;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .input-group input:focus,
+        .input-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .log-console {
+            background: #1e1e1e;
+            color: #00ff00;
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+        }
+
+        .settings-panel {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+
+        .settings-panel h3 {
+            color: #856404;
+            margin-bottom: 10px;
+        }
+
+        .export-section {
+            border-top: 2px solid #e9ecef;
+            padding-top: 20px;
+            margin-top: 20px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #6c757d;
+        }
+
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 10px;
+            opacity: 0.3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎙️ VibeMaster Studio</h1>
+            <p>Voice-Driven Game Content Creation</p>
+        </header>
+
+        <div class="main-content">
+            <!-- LEFT COLUMN: Voice Recording & Settings -->
+            <div>
+                <!-- Settings Panel -->
+                <div class="panel">
+                    <h2>⚙️ Settings</h2>
+                    <div class="input-group">
+                        <label>Proxy Server URL</label>
+                        <input type="text" id="proxyUrl" value="https://audio.netrunners.xyz/vibemaster" />
+                    </div>
+                    <div class="input-group">
+                        <label>ElevenLabs API Key</label>
+                        <input type="password" id="elevenLabsKey" placeholder="sk_..." />
+                    </div>
+                    <div class="input-group">
+                        <label>Claude API Key</label>
+                        <input type="password" id="claudeKey" placeholder="sk-ant-..." />
+                    </div>
+                    <button class="btn btn-secondary" onclick="saveSettings()">💾 Save Settings</button>
+                </div>
+
+                <!-- Voice Recording Panel -->
+                <div class="panel">
+                    <h2>🎤 Voice Recording</h2>
+                    
+                    <div id="recordingStatus" class="status status-idle">
+                        Ready to record
+                    </div>
+
+                    <button class="btn btn-primary" id="recordBtn" onclick="toggleRecording()">
+                        🎤 Hold to Record
+                    </button>
+
+                    <div class="transcription-box" id="transcription">
+                        Transcription will appear here...
+                    </div>
+
+                    <button class="btn btn-success" id="parseBtn" onclick="parseScene()" disabled>
+                        🤖 Parse Scene
+                    </button>
+                </div>
+
+                <!-- Log Console -->
+                <div class="panel">
+                    <h2>📊 Console Log</h2>
+                    <div class="log-console" id="logConsole">
+                        <div class="log-entry">[INFO] VibeMaster Studio initialized</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: Scene Editor & Export -->
+            <div>
+                <!-- Scene Editor Panel -->
+                <div class="panel">
+                    <h2>🎨 Scene Editor</h2>
+                    
+                    <div class="input-group">
+                        <label>Scene Name</label>
+                        <input type="text" id="sceneName" placeholder="e.g., Library" />
+                    </div>
+
+                    <div class="scene-editor" id="sceneEditor">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">🎙️</div>
+                            <p>Record a voice description to populate the scene</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Export Panel -->
+                <div class="panel">
+                    <h2>💾 Export</h2>
+                    
+                    <div class="export-section">
+                        <button class="btn btn-success" onclick="exportScene()" id="exportBtn" disabled>
+                            📦 Export Scene JSON
+                        </button>
+                        
+                        <button class="btn btn-secondary" onclick="copyToClipboard()">
+                            📋 Copy to Clipboard
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // =============================================
+        // STATE MANAGEMENT
+        // =============================================
+
+        let state = {
+            isRecording: false,
+            mediaRecorder: null,
+            audioChunks: [],
+            transcription: '',
+            sceneData: null,
+            settings: {
+                proxyUrl: 'https://audio.netrunners.xyz/vibemaster',
+                elevenLabsKey: '',
+                claudeKey: ''
+            }
+        };
+
+        // =============================================
+        // LOGGING SYSTEM
+        // =============================================
+
+        function log(message, type = 'INFO') {
+            const console = document.getElementById('logConsole');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const colors = {
+                'INFO': '#00ff00',
+                'SUCCESS': '#00ff00',
+                'ERROR': '#ff4444',
+                'WARN': '#ffaa00'
+            };
+            
+            entry.innerHTML = `<span style="color: #888">[${timestamp}]</span> <span style="color: ${colors[type]}">[${type}]</span> ${message}`;
+            console.appendChild(entry);
+            console.scrollTop = console.scrollHeight;
+        }
+
+        // =============================================
+        // SETTINGS MANAGEMENT
+        // =============================================
+
+        function loadSettings() {
+            const saved = localStorage.getItem('vibemaster_settings');
+            if (saved) {
+                state.settings = JSON.parse(saved);
+                document.getElementById('proxyUrl').value = state.settings.proxyUrl;
+                document.getElementById('elevenLabsKey').value = state.settings.elevenLabsKey;
+                document.getElementById('claudeKey').value = state.settings.claudeKey;
+                log('Settings loaded from localStorage');
+            }
+        }
+
+        function saveSettings() {
+            state.settings.proxyUrl = document.getElementById('proxyUrl').value;
+            state.settings.elevenLabsKey = document.getElementById('elevenLabsKey').value;
+            state.settings.claudeKey = document.getElementById('claudeKey').value;
+            
+            localStorage.setItem('vibemaster_settings', JSON.stringify(state.settings));
+            log('Settings saved', 'SUCCESS');
+            alert('Settings saved! ✅');
+        }
+
+        // =============================================
+        // VOICE RECORDING
+        // =============================================
+
+        async function toggleRecording() {
+            if (!state.isRecording) {
+                await startRecording();
+            } else {
+                await stopRecording();
+            }
+        }
+
+        async function startRecording() {
+            log('Requesting microphone access...');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 44100
+                    }
+                });
+                
+                state.mediaRecorder = new MediaRecorder(stream);
+                state.audioChunks = [];
+                
+                state.mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        state.audioChunks.push(event.data);
+                    }
+                };
+                
+                state.mediaRecorder.start();
+                state.isRecording = true;
+                
+                updateRecordingUI(true);
+                log('🎤 Recording started', 'SUCCESS');
+                
+            } catch (error) {
+                log(`❌ Microphone access denied: ${error.message}`, 'ERROR');
+                alert('Microphone access denied. Please enable microphone permissions.');
+            }
+        }
+
+        async function stopRecording() {
+            log('⏸️ Stopping recording...');
+            
+            return new Promise((resolve) => {
+                state.mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(state.audioChunks, { type: 'audio/webm' });
+                    log(`✅ Recording stopped. Size: ${audioBlob.size} bytes`);
+                    
+                    state.isRecording = false;
+                    updateRecordingUI(false);
+                    
+                    // Transcribe
+                    await transcribeAudio(audioBlob);
+                    resolve();
+                };
+                
+                state.mediaRecorder.stop();
+                state.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            });
+        }
+
+        function updateRecordingUI(isRecording) {
+            const statusEl = document.getElementById('recordingStatus');
+            const btnEl = document.getElementById('recordBtn');
+            
+            if (isRecording) {
+                statusEl.textContent = '🔴 Recording... (click again to stop)';
+                statusEl.className = 'status status-recording';
+                btnEl.textContent = '⏹️ Stop Recording';
+            } else {
+                statusEl.textContent = 'Ready to record';
+                statusEl.className = 'status status-idle';
+                btnEl.textContent = '🎤 Hold to Record';
+            }
+        }
+
+        // =============================================
+        // TRANSCRIPTION (STT)
+        // =============================================
+
+        async function transcribeAudio(audioBlob) {
+            const statusEl = document.getElementById('recordingStatus');
+            statusEl.textContent = '🔄 Transcribing...';
+            statusEl.className = 'status status-processing';
+            
+            log('📤 Converting audio to base64...');
+            
+            try {
+                // Convert blob to base64
+                const base64Audio = await blobToBase64(audioBlob);
+                
+                log('📤 Sending to STT endpoint...');
+                
+                const response = await fetch(`${state.settings.proxyUrl}/stt`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        audioData: base64Audio,
+                        apiKey: state.settings.elevenLabsKey,
+                        language: 'en'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`STT failed: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                state.transcription = data.text;
+                
+                document.getElementById('transcription').textContent = state.transcription;
+                document.getElementById('parseBtn').disabled = false;
+                
+                statusEl.textContent = '✅ Transcription complete';
+                statusEl.className = 'status status-success';
+                
+                log(`✅ Transcription: "${state.transcription}"`, 'SUCCESS');
+                
+            } catch (error) {
+                log(`❌ Transcription failed: ${error.message}`, 'ERROR');
+                statusEl.textContent = '❌ Transcription failed';
+                statusEl.className = 'status status-idle';
+            }
+        }
+
+        function blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // =============================================
+        // SCENE PARSING (Claude AI)
+        // =============================================
+
+        async function parseScene() {
+            const statusEl = document.getElementById('recordingStatus');
+            statusEl.textContent = '🤖 Parsing scene with Claude...';
+            statusEl.className = 'status status-processing';
+            
+            log('📤 Sending to Claude API...');
+            
+            const prompt = `Parse this scene description into JSON format:
+
+"${state.transcription}"
+
+Return ONLY valid JSON in this exact format (no markdown, no extra text):
+{
+  "roomName": "Name of the room",
+  "objects": [
+    {
+      "id": "unique_id",
+      "name": "Object Name",
+      "type": "prop",
+      "position": {"x": 0, "y": 0, "z": 5},
+      "description": "detailed description from the voice recording"
+    }
+  ]
+}
+
+Rules:
+- type must be: "prop", "character", or "exit"
+- position: x is left/right, y is up/down, z is forward/back
+- Generate reasonable positions based on spatial descriptions
+- Include ALL objects mentioned`;
+
+            try {
+                const response = await fetch(`${state.settings.proxyUrl}/claude`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: prompt,
+                        apiKey: state.settings.claudeKey,
+                        systemPrompt: 'You are a JSON parser. Return ONLY valid JSON, no markdown formatting, no explanations.'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Claude failed: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                let jsonText = data.response.trim();
+                
+                // Remove markdown code blocks if present
+                jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+                
+                state.sceneData = JSON.parse(jsonText);
+                
+                document.getElementById('sceneName').value = state.sceneData.roomName;
+                renderSceneEditor();
+                
+                statusEl.textContent = '✅ Scene parsed successfully';
+                statusEl.className = 'status status-success';
+                
+                document.getElementById('exportBtn').disabled = false;
+                
+                log(`✅ Parsed ${state.sceneData.objects.length} objects`, 'SUCCESS');
+                
+            } catch (error) {
+                log(`❌ Parsing failed: ${error.message}`, 'ERROR');
+                statusEl.textContent = '❌ Parsing failed';
+                statusEl.className = 'status status-idle';
+                alert('Failed to parse scene. Check console for details.');
+            }
+        }
+
+        // =============================================
+        // SCENE EDITOR RENDERING
+        // =============================================
+
+        function renderSceneEditor() {
+            const editor = document.getElementById('sceneEditor');
+            
+            if (!state.sceneData || !state.sceneData.objects || state.sceneData.objects.length === 0) {
+                editor.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">🎙️</div>
+                        <p>Record a voice description to populate the scene</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '';
+            
+            state.sceneData.objects.forEach((obj, index) => {
+                html += `
+                    <div class="object-card">
+                        <h3>${obj.name}</h3>
+                        <p><strong>Type:</strong> ${obj.type}</p>
+                        <p><strong>Position:</strong> x:${obj.position.x}, y:${obj.position.y}, z:${obj.position.z}</p>
+                        <p><strong>Description:</strong> ${obj.description}</p>
+                    </div>
+                `;
+            });
+            
+            editor.innerHTML = html;
+        }
+
+        // =============================================
+        // EXPORT FUNCTIONALITY
+        // =============================================
+
+        function exportScene() {
+            if (!state.sceneData) {
+                alert('No scene data to export');
+                return;
+            }
+            
+            const sceneName = document.getElementById('sceneName').value || state.sceneData.roomName;
+            state.sceneData.roomName = sceneName;
+            
+            const json = JSON.stringify(state.sceneData, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sceneName.toLowerCase().replace(/\s+/g, '_')}_scene.json`;
+            a.click();
+            
+            log(`✅ Scene exported: ${a.download}`, 'SUCCESS');
+            alert('Scene JSON downloaded! 🎉');
+        }
+
+        function copyToClipboard() {
+            if (!state.sceneData) {
+                alert('No scene data to copy');
+                return;
+            }
+            
+            const json = JSON.stringify(state.sceneData, null, 2);
+            navigator.clipboard.writeText(json);
+            
+            log('✅ Scene JSON copied to clipboard', 'SUCCESS');
+            alert('Scene JSON copied to clipboard! 📋');
+        }
+
+        // =============================================
+        // INITIALIZATION
+        // =============================================
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            log('🚀 VibeMaster Studio ready', 'SUCCESS');
+        });
+    </script>
+</body>
+</html>
