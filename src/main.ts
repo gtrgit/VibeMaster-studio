@@ -79,6 +79,7 @@ function getGoalEmoji(goalType: string): string {
 
 class GameScene extends Phaser.Scene {
   private statusText?: Phaser.GameObjects.Text;
+  private npcInfoText?: Phaser.GameObjects.Text;
   private worldData: any = null;
   private npcSprites: Map<
     string,
@@ -251,7 +252,8 @@ class GameScene extends Phaser.Scene {
       info += `(Empty)`;
     }
 
-    this.statusText?.setText(info);
+    // Show storage info in the NPC info area
+    this.npcInfoText?.setText(info);
   }
 
   updateResourceSystem(currentHour: number): void {
@@ -355,47 +357,58 @@ class GameScene extends Phaser.Scene {
     this.createPlayer();
     console.log("✅ createPlayer call completed");
 
-    // Title
-    console.log("📝 About to create title...");
-    this.add.text(20, 20, "🎮 VibeMaster - Living World", {
-      fontSize: "32px",
-      color: "#fff",
-      stroke: "#000",
-      strokeThickness: 4,
-    });
+    // Removed title to make room for horizontal stats
 
-    // Mode indicator
-    const mode = isTauri ? "🖥️ Desktop Mode" : "🌐 Browser Mode (Dev)";
-    this.add.text(20, 60, mode, {
+    // Create horizontal status bar at top
+    const statusBarY = 10;
+    
+    // Status display (now horizontal at top-left)
+    this.statusText = this.add.text(20, statusBarY, "Loading...", {
+      fontSize: "14px",
+      color: "#fff",
+      backgroundColor: "#00000088",
+      padding: { x: 8, y: 4 },
+    });
+    
+    // Mode indicator (top-right)
+    const mode = isTauri ? "🖥️ Desktop Mode" : "🌐 Browser Mode";
+    const modeText = this.add.text(1400, statusBarY, mode, {
       fontSize: "14px",
       color: "#888",
+      backgroundColor: "#00000088",
+      padding: { x: 8, y: 4 },
     });
 
-    // Check dev server connection in browser mode
+    // Server status (top-right, below mode)
     if (!isTauri) {
       try {
         await fetchFromDevServer("/health");
         this.devServerConnected = true;
-        this.add.text(20, 80, "✅ Connected to dev server", {
-          fontSize: "12px",
+        this.add.text(1400, statusBarY + 30, "✅ Server OK", {
+          fontSize: "14px",
           color: "#4f4",
+          backgroundColor: "#00000088",
+          padding: { x: 8, y: 4 },
         });
       } catch (e) {
         this.devServerConnected = false;
-        this.add.text(20, 80, "⚠️ Dev server not running (using mock data)", {
-          fontSize: "12px",
+        this.add.text(1400, statusBarY + 30, "⚠️ Using Mock Data", {
+          fontSize: "14px",
           color: "#f90",
+          backgroundColor: "#00000088",
+          padding: { x: 8, y: 4 },
         });
         console.log("ℹ️ Dev server not available. Using mock data. Run 'npm run dev:server' for live data.");
       }
     }
 
-    // Status display
-    this.statusText = this.add.text(20, isTauri ? 100 : 120, "Loading...", {
+    // NPC Info display (new container in top-left where status used to be)
+    this.npcInfoText = this.add.text(20, 60, "Click an NPC to see their info", {
       fontSize: "16px",
       color: "#fff",
       backgroundColor: "#00000088",
       padding: { x: 10, y: 10 },
+      wordWrap: { width: 300 },
     });
 
     // Controls
@@ -484,7 +497,8 @@ class GameScene extends Phaser.Scene {
   }
 
   createControls() {
-    const yPos = isTauri ? 180 : 200;
+    // Position buttons at bottom-left
+    const yPos = 900;
 
     const startBtn = this.add
       .text(20, yPos, "▶️ Start", {
@@ -499,9 +513,9 @@ class GameScene extends Phaser.Scene {
       try {
         if (isTauri) {
           await callTauriCommand("start_simulation");
-          this.statusText?.setText("✅ Simulation started!");
+          this.updateStatusBar();
         } else {
-          this.statusText?.setText("ℹ️ Run: npm run dev");
+          console.log("ℹ️ Run: npm run dev");
         }
       } catch (e) {
         console.error("Start error:", e);
@@ -521,9 +535,9 @@ class GameScene extends Phaser.Scene {
       try {
         if (isTauri) {
           await callTauriCommand("stop_simulation");
-          this.statusText?.setText("⏸️ Stopped");
+          this.updateStatusBar();
         } else {
-          this.statusText?.setText("ℹ️ Ctrl+C in terminal");
+          console.log("ℹ️ Ctrl+C in terminal");
         }
       } catch (e) {
         console.error("Stop error:", e);
@@ -606,15 +620,12 @@ class GameScene extends Phaser.Scene {
   renderWorld() {
     const { currentDay, currentHour, npcs } = this.worldData;
 
-    let statusText = `📅 Day ${currentDay}, Hour ${currentHour}:00\n\n`;
-    statusText += `👥 ${npcs?.length || 0} NPCs active\n`;
-    statusText += `📦 ${
+    // Update horizontal status bar
+    const statusText = `📅 Day ${currentDay}, ${currentHour}:00 | 👥 ${npcs?.length || 0} NPCs | 📦 ${
       this.resourceManager.getSummary().length
-    } resource types\n`;
-    statusText += `🏭 ${
+    } resources | 🏭 ${
       this.resourceManager.getActiveTasks().length
-    } NPCs working\n\n`;
-    statusText += "Click NPC/storage for details";
+    } working`;
 
     this.statusText?.setText(statusText);
 
@@ -878,7 +889,7 @@ class GameScene extends Phaser.Scene {
   }
 
   showNPCInfo(npc: any) {
-    // Show the original NPC info in status text
+    // Show the NPC info in the persistent NPC info area
     const avgNeed = (npc.needFood + npc.needSafety) / 2;
     let info = `📋 ${npc.name}\n\n`;
     info += `Occupation: ${npc.occupation || "Villager"}\n`;
@@ -940,7 +951,15 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    this.statusText?.setText(info);
+    // Update the NPC info area, not the status bar
+    this.npcInfoText?.setText(info);
+  }
+  
+  updateStatusBar() {
+    // Force update the status bar
+    if (this.worldData) {
+      this.renderWorld();
+    }
   }
 
   closeConversation() {
