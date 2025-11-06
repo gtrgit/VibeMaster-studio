@@ -27,7 +27,9 @@
       "Bash(rm:*)",
       "Bash(git stash push:*)",
       "Bash(git stash:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npm start)",
+      "Bash(cat:*)"
     ],
     "deny": []
   }

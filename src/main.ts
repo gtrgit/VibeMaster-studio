@@ -93,6 +93,11 @@ class GameScene extends Phaser.Scene {
   > = new Map();
   private devServerConnected: boolean = false;
 
+  // Conversation system
+  private conversationPanel?: Phaser.GameObjects.Container;
+  private isInConversation: boolean = false;
+  private currentConversationNPC?: any;
+
   // Resource system
   private resourceManager!: ResourceManager;
   private resourcePanel!: ResourcePanel;
@@ -327,6 +332,8 @@ class GameScene extends Phaser.Scene {
 
   async create() {
     console.log("🎬 NEW CODE: Starting create() method with player support...");
+    console.log("🔍 Tauri detection: isTauri =", isTauri);
+    console.log("🔍 Window.__TAURI__:", typeof (window as any).__TAURI__);
     
     // Initialize resource system FIRST
     console.log("🏭 About to init resource system...");
@@ -375,10 +382,11 @@ class GameScene extends Phaser.Scene {
         });
       } catch (e) {
         this.devServerConnected = false;
-        this.add.text(20, 80, "⚠️ Dev server not running", {
+        this.add.text(20, 80, "⚠️ Dev server not running (using mock data)", {
           fontSize: "12px",
-          color: "#f44",
+          color: "#f90",
         });
+        console.log("ℹ️ Dev server not available. Using mock data. Run 'npm run dev:server' for live data.");
       }
     }
 
@@ -786,7 +794,91 @@ class GameScene extends Phaser.Scene {
 
   onNPCClick(npc: any) {
     console.log("Clicked NPC:", npc);
+    
+    // If already in conversation, close it and return
+    if (this.isInConversation) {
+      this.closeConversation();
+      return;
+    }
 
+    // Start conversation instead of showing stats
+    this.startConversation(npc);
+  }
+  
+  startConversation(npc: any) {
+    console.log("Starting conversation with:", npc.name);
+    
+    this.isInConversation = true;
+    this.currentConversationNPC = npc;
+    
+    // Create simple conversation UI
+    this.createSimpleConversationUI(npc);
+  }
+
+  createSimpleConversationUI(npc: any) {
+    // Close existing conversation if any
+    if (this.conversationPanel) {
+      this.conversationPanel.destroy();
+    }
+
+    // Create container for conversation UI
+    this.conversationPanel = this.add.container(0, 0);
+
+    // Simple background panel
+    const panelWidth = 600;
+    const panelHeight = 300;
+    const panelX = (1600 - panelWidth) / 2;
+    const panelY = (1000 - panelHeight) / 2;
+
+    const background = this.add.rectangle(
+      panelX + panelWidth / 2,
+      panelY + panelHeight / 2,
+      panelWidth,
+      panelHeight,
+      0x000000,
+      0.9
+    );
+    background.setStrokeStyle(3, 0x666666);
+
+    // NPC greeting
+    const greetingText = this.add.text(panelX + 20, panelY + 20, `${npc.name}: Hello there!`, {
+      fontSize: "20px",
+      color: "#fff",
+      fontStyle: "bold",
+    });
+
+    // Show NPC info button
+    const infoButton = this.add.text(panelX + 20, panelY + 100, "Show NPC Info", {
+      fontSize: "16px",
+      color: "#4af",
+      backgroundColor: "#333333",
+      padding: { x: 10, y: 5 },
+    });
+    
+    infoButton.setInteractive();
+    infoButton.on("pointerdown", () => {
+      this.closeConversation();
+      this.showNPCInfo(npc);
+    });
+
+    // Close button
+    const closeButton = this.add.text(panelX + 20, panelY + 150, "Goodbye", {
+      fontSize: "16px",
+      color: "#f44",
+      backgroundColor: "#333333",
+      padding: { x: 10, y: 5 },
+    });
+    
+    closeButton.setInteractive();
+    closeButton.on("pointerdown", () => this.closeConversation());
+
+    // Add all elements to container
+    this.conversationPanel.add([background, greetingText, infoButton, closeButton]);
+    this.conversationPanel.setDepth(2000);
+  }
+
+  showNPCInfo(npc: any) {
+    // Show the original NPC info in status text
     const avgNeed = (npc.needFood + npc.needSafety) / 2;
     let info = `📋 ${npc.name}\n\n`;
     info += `Occupation: ${npc.occupation || "Villager"}\n`;
@@ -849,6 +941,18 @@ class GameScene extends Phaser.Scene {
     }
 
     this.statusText?.setText(info);
+  }
+
+  closeConversation() {
+    console.log("Closing conversation");
+    
+    if (this.conversationPanel) {
+      this.conversationPanel.destroy();
+      this.conversationPanel = undefined;
+    }
+    
+    this.isInConversation = false;
+    this.currentConversationNPC = undefined;
   }
 
   update() {

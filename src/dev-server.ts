@@ -2,6 +2,11 @@
 import express from "express";
 import cors from "cors";
 import { getDatabase } from "./database";
+import dotenv from "dotenv";
+
+// Load environment variables
+dotenv.config();
+console.log("Dev server DATABASE_URL:", process.env.DATABASE_URL);
 
 const app = express();
 const PORT = 3001;
@@ -12,6 +17,27 @@ app.use(cors());
 // Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", message: "VibeMaster Dev Server Running" });
+});
+
+// Database test endpoint
+app.get("/test-db", async (req, res) => {
+  try {
+    const db = getDatabase();
+    const count = await db.world.count();
+    res.json({ 
+      status: "ok", 
+      message: "Database connected", 
+      worldCount: count,
+      databaseUrl: process.env.DATABASE_URL 
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: "error", 
+      message: "Database connection failed",
+      error: error instanceof Error ? error.message : String(error),
+      databaseUrl: process.env.DATABASE_URL 
+    });
+  }
 });
 
 // Get world state (same format as Tauri command)
@@ -64,7 +90,9 @@ app.get("/api/world-state", async (req, res) => {
     }
   } catch (error) {
     console.error("Error fetching world state:", error);
-    res.status(500).json({ error: "Failed to fetch world state" });
+    console.error("Full error details:", error instanceof Error ? error.message : error);
+    console.error("Stack trace:", error instanceof Error ? error.stack : "No stack trace");
+    res.status(500).json({ error: "Failed to fetch world state", details: error instanceof Error ? error.message : String(error) });
   }
 });
 
