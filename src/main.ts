@@ -16,6 +16,12 @@ import {
 import { LocationSystem } from "./location-system";
 import { DailyCycleSystem } from "./daily-cycle-system";
 import { NPCBehaviorState } from "./need-based-behavior";
+import { 
+  NPC_PERSONALITIES, 
+  getPersonalityGreeting, 
+  getPersonalityWellbeingResponse,
+  getPersonalityOccupationResponse 
+} from "./personality-system";
 
 // Simple runtime check for Tauri without type issues
 const isTauri =
@@ -837,7 +843,7 @@ class GameScene extends Phaser.Scene {
 
     // Simple background panel
     const panelWidth = 600;
-    const panelHeight = 300;
+    const panelHeight = 400;
     const panelX = (1600 - panelWidth) / 2;
     const panelY = (1000 - panelHeight) / 2;
 
@@ -851,49 +857,172 @@ class GameScene extends Phaser.Scene {
     );
     background.setStrokeStyle(3, 0x666666);
 
-    // NPC greeting
-    const greetingText = this.add.text(panelX + 20, panelY + 20, `${npc.name}: Hello there!`, {
+    // NPC greeting based on personality
+    const personality = NPC_PERSONALITIES[npc.name];
+    const greeting = personality 
+      ? getPersonalityGreeting(npc, personality)
+      : `${npc.name}: Hello there!`;
+    
+    const greetingText = this.add.text(panelX + 20, panelY + 20, greeting, {
+      fontSize: "18px",
+      color: "#fff",
+      fontStyle: "bold",
+      wordWrap: { width: panelWidth - 40 },
+    });
+
+    // Conversation options
+    const options = [
+      { text: "How are you doing?", callback: () => this.showWellbeingResponse(npc) },
+      { text: "What do you do here?", callback: () => this.showOccupationResponse(npc) },
+      { text: "Show NPC Info", callback: () => { this.closeConversation(); this.showNPCInfo(npc); } },
+      { text: "Goodbye", callback: () => this.closeConversation() }
+    ];
+
+    let buttonY = panelY + 150; // Moved down to give more space for greeting
+    const buttons: Phaser.GameObjects.Text[] = [];
+    
+    options.forEach((option, index) => {
+      const button = this.add.text(panelX + 20, buttonY + (index * 45), option.text, {
+        fontSize: "16px",
+        color: index === options.length - 1 ? "#f44" : "#4af",
+        backgroundColor: "#333333",
+        padding: { x: 10, y: 5 },
+      });
+      
+      button.setInteractive();
+      button.on("pointerdown", option.callback);
+      button.on("pointerover", () => button.setStyle({ backgroundColor: "#555555" }));
+      button.on("pointerout", () => button.setStyle({ backgroundColor: "#333333" }));
+      
+      buttons.push(button);
+    });
+
+    // Add all elements to container in proper order
+    this.conversationPanel.add([background, greetingText, ...buttons]);
+    this.conversationPanel.setDepth(2000);
+  }
+
+  showWellbeingResponse(npc: any) {
+    const personality = NPC_PERSONALITIES[npc.name];
+    const response = personality 
+      ? getPersonalityWellbeingResponse(npc, personality)
+      : this.getBasicWellbeingResponse(npc);
+    
+    this.showNPCDialogueResponse(npc, response);
+  }
+
+  showOccupationResponse(npc: any) {
+    const personality = NPC_PERSONALITIES[npc.name];
+    const task = this.resourceManager.getNPCTask(npc.name);
+    const currentHour = this.worldData?.currentHour;
+    const response = personality 
+      ? getPersonalityOccupationResponse(npc, personality, task, currentHour)
+      : this.getBasicOccupationResponse(npc);
+    
+    this.showNPCDialogueResponse(npc, response);
+  }
+
+  showNPCDialogueResponse(npc: any, responseText: string) {
+    if (this.conversationPanel) {
+      this.conversationPanel.destroy();
+    }
+
+    // Create container for conversation UI
+    this.conversationPanel = this.add.container(0, 0);
+
+    // Smaller response panel
+    const panelWidth = 600;
+    const panelHeight = 250; // Reduced height
+    const panelX = (1600 - panelWidth) / 2;
+    const panelY = (1000 - panelHeight) / 2 - 50; // Moved up a bit
+
+    const background = this.add.rectangle(
+      panelX + panelWidth / 2,
+      panelY + panelHeight / 2,
+      panelWidth,
+      panelHeight,
+      0x000000,
+      0.95 // More opaque
+    );
+    background.setStrokeStyle(3, 0x666666);
+
+    // NPC name
+    const nameText = this.add.text(panelX + 20, panelY + 20, `${npc.name}:`, {
       fontSize: "20px",
       color: "#fff",
       fontStyle: "bold",
     });
 
-    // Show NPC info button
-    const infoButton = this.add.text(panelX + 20, panelY + 100, "Show NPC Info", {
+    // Response text
+    const dialogueBox = this.add.text(panelX + 20, panelY + 60, responseText, {
+      fontSize: "16px",
+      color: "#fff",
+      wordWrap: { width: panelWidth - 40 },
+      lineSpacing: 8,
+    });
+
+    // Continue button
+    const continueButton = this.add.text(panelX + panelWidth/2 - 50, panelY + panelHeight - 50, "Continue", {
       fontSize: "16px",
       color: "#4af",
       backgroundColor: "#333333",
-      padding: { x: 10, y: 5 },
+      padding: { x: 15, y: 8 },
     });
     
-    infoButton.setInteractive();
-    infoButton.on("pointerdown", () => {
-      this.closeConversation();
-      this.showNPCInfo(npc);
-    });
-
-    // Close button
-    const closeButton = this.add.text(panelX + 20, panelY + 150, "Goodbye", {
-      fontSize: "16px",
-      color: "#f44",
-      backgroundColor: "#333333",
-      padding: { x: 10, y: 5 },
-    });
-    
-    closeButton.setInteractive();
-    closeButton.on("pointerdown", () => this.closeConversation());
+    continueButton.setInteractive();
+    continueButton.on("pointerdown", () => this.createSimpleConversationUI(npc));
+    continueButton.on("pointerover", () => continueButton.setStyle({ backgroundColor: "#555555" }));
+    continueButton.on("pointerout", () => continueButton.setStyle({ backgroundColor: "#333333" }));
 
     // Add all elements to container
-    this.conversationPanel.add([background, greetingText, infoButton, closeButton]);
-    this.conversationPanel.setDepth(2000);
+    this.conversationPanel.add([background, nameText, dialogueBox, continueButton]);
+    this.conversationPanel.setDepth(2100); // Higher depth to ensure it's on top
+  }
+
+  getBasicWellbeingResponse(npc: any): string {
+    const avgNeed = (npc.needFood + npc.needSafety) / 2;
+    
+    if (avgNeed < 30) {
+      return "I'm struggling terribly! I need help urgently.";
+    } else if (avgNeed < 60) {
+      return "I'm managing, but things could be better.";
+    } else {
+      return "I'm doing well, thank you for asking!";
+    }
+  }
+
+  getBasicOccupationResponse(npc: any): string {
+    const task = this.resourceManager.getNPCTask(npc.name);
+    const occupation = npc.occupation || "Villager";
+    
+    if (task) {
+      return `I'm a ${occupation}, currently working on making ${task.amount}x ${task.resource}. Should be done in ${task.endHour - this.worldData.currentHour} hours.`;
+    } else {
+      return `I'm a ${occupation}. I do my part to keep our community running.`;
+    }
   }
 
   showNPCInfo(npc: any) {
     // Show the NPC info in the persistent NPC info area
     const avgNeed = (npc.needFood + npc.needSafety) / 2;
+    const personality = NPC_PERSONALITIES[npc.name];
+    
     let info = `📋 ${npc.name}\n\n`;
     info += `Occupation: ${npc.occupation || "Villager"}\n`;
     info += `Health: ${Math.round(avgNeed)}%\n`;
+    
+    // Add personality info if available
+    if (personality) {
+      const traits = personality.traits;
+      info += `\nPersonality:\n`;
+      if (traits.extraversion > 70) info += `  • Outgoing and talkative\n`;
+      else if (traits.extraversion < 30) info += `  • Quiet and reserved\n`;
+      
+      if (traits.conscientiousness > 70) info += `  • Hardworking and reliable\n`;
+      if (traits.agreeableness > 70) info += `  • Helpful and caring\n`;
+      if (traits.neuroticism > 60) info += `  • Anxious and worried\n`;
+      else if (traits.neuroticism < 40) info += `  • Calm and stable\n`;
+    }
 
     // Show behavior info if available
     const behaviorNPC = this.cycleSystem.getNPC(npc.name);
