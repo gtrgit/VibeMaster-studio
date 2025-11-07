@@ -22,6 +22,12 @@ import {
   getPersonalityWellbeingResponse,
   getPersonalityOccupationResponse 
 } from "./personality-system";
+import { 
+  detectCrisis, 
+  getCrisisDialogueOptions,
+  shouldInterruptForCrisis 
+} from "./crisis-system";
+import { LocationCrisisSystem, CRISIS_ZONES } from "./location-crisis-system";
 
 // Simple runtime check for Tauri without type issues
 const isTauri =
@@ -86,6 +92,7 @@ function getGoalEmoji(goalType: string): string {
 class GameScene extends Phaser.Scene {
   private statusText?: Phaser.GameObjects.Text;
   private npcInfoText?: Phaser.GameObjects.Text;
+  private npcInfoPanel?: Phaser.GameObjects.Container;
   private worldData: any = null;
   private npcSprites: Map<
     string,
@@ -104,6 +111,12 @@ class GameScene extends Phaser.Scene {
   private conversationPanel?: Phaser.GameObjects.Container;
   private isInConversation: boolean = false;
   private currentConversationNPC?: any;
+  
+  // Track currently displayed NPC for auto-updating info panel
+  private currentDisplayedNPC?: any;
+  
+  // Testing mode - disable automatic need changes
+  private testingMode: boolean = false;
 
   // Resource system
   private resourceManager!: ResourceManager;
@@ -115,6 +128,15 @@ class GameScene extends Phaser.Scene {
   // Daily cycle system
   private locationSystem!: LocationSystem;
   private cycleSystem!: DailyCycleSystem;
+  
+  // Location crisis system
+  private locationCrisisSystem!: LocationCrisisSystem;
+  private crisisZoneGraphics: Phaser.GameObjects.Graphics[] = [];
+  private lastPlayerPosition: { x: number; y: number } = { x: -1, y: -1 };
+  
+  // Building graphics
+  private buildingGraphics: Phaser.GameObjects.Graphics[] = [];
+  private buildingTexts: Phaser.GameObjects.Text[] = [];
 
   // Test: Add ALL player properties
   private player!: Phaser.GameObjects.Sprite;
@@ -242,8 +264,132 @@ class GameScene extends Phaser.Scene {
     console.log("✅ Daily cycle system initialized!\n");
   }
 
+  initLocationCrisisSystem(): void {
+    console.log("⚠️ Initializing location crisis system...");
+    
+    // Create crisis system instance
+    this.locationCrisisSystem = new LocationCrisisSystem();
+    
+    // Create visual indicators for crisis zones
+    this.renderCrisisZones();
+    
+    console.log(`   📍 Created ${CRISIS_ZONES.length} crisis zones`);
+    console.log("✅ Location crisis system initialized!\n");
+  }
+  
+  renderCrisisZones(): void {
+    // Clear existing graphics
+    this.crisisZoneGraphics.forEach(g => g.destroy());
+    this.crisisZoneGraphics = [];
+    
+    // Get zone visuals from the system
+    const zoneVisuals = this.locationCrisisSystem.getZoneVisuals();
+    
+    for (const { zone, color, alpha } of zoneVisuals) {
+      const graphics = this.add.graphics();
+      
+      // Draw zone rectangle
+      graphics.fillStyle(color, alpha);
+      graphics.fillRect(zone.x, zone.y, zone.width, zone.height);
+      
+      // Draw border
+      graphics.lineStyle(2, color, 0.8);
+      graphics.strokeRect(zone.x, zone.y, zone.width, zone.height);
+      
+      // Draw effect radius circle (dotted)
+      const centerX = zone.x + zone.width / 2;
+      const centerY = zone.y + zone.height / 2;
+      graphics.lineStyle(1, color, 0.4);
+      
+      // Draw dotted circle for effect radius
+      const segments = 32;
+      for (let i = 0; i < segments; i += 2) {
+        const angle1 = (i / segments) * Math.PI * 2;
+        const angle2 = ((i + 1) / segments) * Math.PI * 2;
+        const x1 = centerX + Math.cos(angle1) * zone.effectRadius;
+        const y1 = centerY + Math.sin(angle1) * zone.effectRadius;
+        const x2 = centerX + Math.cos(angle2) * zone.effectRadius;
+        const y2 = centerY + Math.sin(angle2) * zone.effectRadius;
+        graphics.lineBetween(x1, y1, x2, y2);
+      }
+      
+      // Add zone name text
+      const text = this.add.text(
+        centerX,
+        centerY,
+        `${zone.name}\n(${zone.effectRadius}px radius)`,
+        {
+          fontSize: "12px",
+          color: "#fff",
+          backgroundColor: "#00000099",
+          padding: { x: 4, y: 2 },
+          align: "center"
+        }
+      );
+      text.setOrigin(0.5);
+      text.setDepth(1);
+      
+      this.crisisZoneGraphics.push(graphics);
+    }
+  }
+
+  createNPCInfoPanel(): void {
+    // Create container for the NPC info panel
+    this.npcInfoPanel = this.add.container(20, 60);
+    this.npcInfoPanel.setDepth(100);
+
+    // Background
+    const bg = this.add.rectangle(0, 0, 380, 400, 0x000000, 0.8);
+    bg.setOrigin(0, 0);
+    this.npcInfoPanel.add(bg);
+
+    // Initial text
+    this.npcInfoText = this.add.text(10, 10, "Click an NPC to see their info\n\nStats will update in real-time\nwhen viewing NPC details", {
+      fontSize: "16px",
+      color: "#fff",
+      wordWrap: { width: 360 },
+    });
+    this.npcInfoPanel.add(this.npcInfoText);
+  }
+
+  updateNPCStatValue(statName: string, change: number): void {
+    if (!this.currentDisplayedNPC) return;
+
+    // Enable testing mode when manually adjusting stats
+    this.testingMode = true;
+
+    // Find the NPC in world data
+    const worldNPC = this.worldData?.npcs?.find((n: any) => n.name === this.currentDisplayedNPC.name);
+    if (!worldNPC) return;
+
+    // Update the stat in world data
+    const newValue = Math.max(0, Math.min(100, worldNPC[statName] + change));
+    worldNPC[statName] = newValue;
+    this.currentDisplayedNPC[statName] = newValue;
+
+    // Also update behavior NPC if this is a social/rest stat
+    const behaviorNPC = this.cycleSystem.getNPC(this.currentDisplayedNPC.name);
+    if (behaviorNPC && (statName === 'needSocial' || statName === 'needRest')) {
+      behaviorNPC[statName] = newValue;
+    }
+
+    // Show floating text effect on the NPC
+    const npcVisual = this.npcSprites.get(this.currentDisplayedNPC.name);
+    if (npcVisual) {
+      const displayName = statName.replace('need', '').replace('emotion', '');
+      const effectText = `${displayName} ${change > 0 ? '+' : ''}${change}`;
+      this.showNPCEffectText(npcVisual.sprite, [effectText]);
+    }
+
+    // Refresh the info display
+    this.generateNPCInfoText(this.currentDisplayedNPC);
+  }
+
   onStorageClick(storage: any): void {
     console.log("Clicked storage:", storage.name);
+
+    // Clear displayed NPC when showing storage info
+    this.currentDisplayedNPC = undefined;
 
     let info = `🏢 ${storage.name}\n\n`;
     info += `Capacity: ${storage.getTotalStored()}/${storage.capacity}\n`;
@@ -258,8 +404,23 @@ class GameScene extends Phaser.Scene {
       info += `(Empty)`;
     }
 
-    // Show storage info in the NPC info area
-    this.npcInfoText?.setText(info);
+    // Show storage info in the NPC info area  
+    if (this.npcInfoPanel && this.npcInfoText) {
+      this.npcInfoPanel.removeAll(true);
+      
+      // Background
+      const bg = this.add.rectangle(0, 0, 380, 300, 0x000000, 0.8);
+      bg.setOrigin(0, 0);
+      this.npcInfoPanel.add(bg);
+      
+      // Storage info text
+      const storageText = this.add.text(10, 10, info, {
+        fontSize: "16px",
+        color: "#fff",
+        wordWrap: { width: 360 }
+      });
+      this.npcInfoPanel.add(storageText);
+    }
   }
 
   updateResourceSystem(currentHour: number): void {
@@ -270,8 +431,10 @@ class GameScene extends Phaser.Scene {
     console.log(`🕐 HOUR ${currentHour} UPDATE`);
     console.log("=".repeat(60));
 
-    // Update daily cycle system (handles checkpoints at 6, 12, 18, 22)
-    this.cycleSystem.onHourChange(currentHour);
+    // Update daily cycle system (handles checkpoints at 6, 12, 18, 22) - but only if not in testing mode
+    if (!this.testingMode) {
+      this.cycleSystem.onHourChange(currentHour);
+    }
 
     // First, check what NPCs are thinking
     if (this.worldData?.npcs) {
@@ -306,11 +469,18 @@ class GameScene extends Phaser.Scene {
           !existingTask &&
           PRODUCTION_RECIPES[npc.occupation?.toLowerCase()]
         ) {
+          // Get NPC's current location and workplace from behavior system
+          const behaviorNPC = this.cycleSystem.getNPC(npc.name);
+          const currentLocation = behaviorNPC?.currentLocation;
+          const workplace = behaviorNPC?.workplace;
+
           const task = this.resourceManager.startProduction(
             npc.name,
             npc.occupation,
             currentHour,
-            "warehouse"
+            "warehouse",
+            currentLocation,
+            workplace
           );
 
           if (task) {
@@ -352,6 +522,16 @@ class GameScene extends Phaser.Scene {
     console.log("🌅 About to init daily cycle system...");
     this.initDailyCycleSystem();
     console.log("✅ Daily cycle system initialized");
+    
+    // Initialize location crisis system THIRD
+    console.log("⚠️ About to init location crisis system...");
+    this.initLocationCrisisSystem();
+    console.log("✅ Location crisis system initialized");
+    
+    // Initialize buildings FOURTH
+    console.log("🏠 About to render buildings...");
+    this.renderBuildings();
+    console.log("✅ Buildings rendered");
 
     // Create background
     console.log("🎨 About to create background...");
@@ -408,14 +588,8 @@ class GameScene extends Phaser.Scene {
       }
     }
 
-    // NPC Info display (new container in top-left where status used to be)
-    this.npcInfoText = this.add.text(20, 60, "Click an NPC to see their info", {
-      fontSize: "16px",
-      color: "#fff",
-      backgroundColor: "#00000088",
-      padding: { x: 10, y: 10 },
-      wordWrap: { width: 300 },
-    });
+    // NPC Info display (interactive panel in top-left)
+    this.createNPCInfoPanel();
 
     // Controls
     this.createControls();
@@ -589,34 +763,31 @@ class GameScene extends Phaser.Scene {
         {
           name: "Marcus",
           occupation: "Blacksmith",
-          needFood: 80,
+          needFood: 8,  // EXTREME starvation crisis (was 80)
           needSafety: 90,
           needWealth: 60,
-          emotionHappiness: 62,
+          emotionHappiness: 31,
           emotionFear: 0,
-          emotionSadness: 100,
           goals: [{ type: "survival", priority: 80 }],
         },
         {
           name: "Sarah",
           occupation: "Merchant",
           needFood: 44,
-          needSafety: 80,
-          needWealth: 40,
-          emotionHappiness: 47,
+          needSafety: 15,  // HIGH danger crisis (was 80)
+          needWealth: 5,   // Poverty crisis (was 40)
+          emotionHappiness: 24,
           emotionFear: 0,
-          emotionSadness: 100,
           goals: [{ type: "wealth", priority: 90 }],
         },
         {
           name: "Emma",
-          occupation: "Healer",
+          occupation: "Baker",
           needFood: 73,
           needSafety: 85,
           needWealth: 55,
-          emotionHappiness: 49,
+          emotionHappiness: 10,  // Emotional breakdown crisis (was 25)
           emotionFear: 0,
-          emotionSadness: 100,
           goals: [],
         },
       ],
@@ -634,6 +805,9 @@ class GameScene extends Phaser.Scene {
     } working`;
 
     this.statusText?.setText(statusText);
+
+    // Update NPC info panel if one is currently displayed
+    this.updateNPCInfoDisplay();
 
     if (npcs && npcs.length > 0) {
       this.renderNPCs(npcs);
@@ -666,16 +840,17 @@ class GameScene extends Phaser.Scene {
           x = location.x;
           y = location.y;
 
-          // Offset multiple NPCs at same location
+          // Offset for multiple NPCs at same location (no random jitter)
           const npcsAtLocation = this.cycleSystem.getNPCsAtLocation(
             behaviorNPC.currentLocation
           );
           const npcIndex = npcsAtLocation.findIndex((n) => n.name === npc.name);
+          
           if (npcIndex > 0) {
-            // Spread NPCs slightly if multiple at same location
+            // Spread multiple NPCs in a small circle around the building
             const offsetAngle =
               (npcIndex / npcsAtLocation.length) * Math.PI * 2;
-            x += Math.cos(offsetAngle) * 30;
+            x += Math.cos(offsetAngle) * 30; // Reduced from 80 to 30
             y += Math.sin(offsetAngle) * 30;
           }
         }
@@ -776,11 +951,13 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      // Update emotion
+      // Update emotion (0-50 = sad, 51-100 = happy)
       let emotionEmoji = "";
-      if (npc.emotionSadness > 80) emotionEmoji = "😢";
-      else if (npc.emotionFear > 80) emotionEmoji = "😰";
-      else if (npc.emotionHappiness > 80) emotionEmoji = "😄";
+      if (npc.emotionHappiness < 25) emotionEmoji = "😢"; // Very sad
+      else if (npc.emotionHappiness < 50) emotionEmoji = "😞"; // Sad
+      else if (npc.emotionFear > 80) emotionEmoji = "😰"; // Fear overrides happiness
+      else if (npc.emotionHappiness > 80) emotionEmoji = "😄"; // Very happy
+      else if (npc.emotionHappiness > 60) emotionEmoji = "😊"; // Happy
       npcVisual.emotionIcon?.setText(emotionEmoji);
 
       // Update health bar
@@ -870,13 +1047,26 @@ class GameScene extends Phaser.Scene {
       wordWrap: { width: panelWidth - 40 },
     });
 
-    // Conversation options
-    const options = [
-      { text: "How are you doing?", callback: () => this.showWellbeingResponse(npc) },
-      { text: "What do you do here?", callback: () => this.showOccupationResponse(npc) },
-      { text: "Show NPC Info", callback: () => { this.closeConversation(); this.showNPCInfo(npc); } },
-      { text: "Goodbye", callback: () => this.closeConversation() }
-    ];
+    // Conversation options - check for crisis
+    const crisis = detectCrisis(npc);
+    let options: Array<{ text: string, callback: () => void }> = [];
+    
+    if (crisis && shouldInterruptForCrisis(crisis)) {
+      // Crisis dialogue options
+      const crisisOptions = getCrisisDialogueOptions(npc, crisis);
+      options = crisisOptions.map(opt => ({
+        text: opt.text,
+        callback: () => this.handleCrisisResponse(npc, opt.action, crisis)
+      }));
+    } else {
+      // Normal dialogue options
+      options = [
+        { text: "How are you doing?", callback: () => this.showWellbeingResponse(npc) },
+        { text: "What do you do here?", callback: () => this.showOccupationResponse(npc) },
+        { text: "Show NPC Info", callback: () => { this.closeConversation(); this.showNPCInfo(npc); } },
+        { text: "Goodbye", callback: () => this.closeConversation() }
+      ];
+    }
 
     let buttonY = panelY + 150; // Moved down to give more space for greeting
     const buttons: Phaser.GameObjects.Text[] = [];
@@ -918,6 +1108,42 @@ class GameScene extends Phaser.Scene {
     const response = personality 
       ? getPersonalityOccupationResponse(npc, personality, task, currentHour)
       : this.getBasicOccupationResponse(npc);
+    
+    this.showNPCDialogueResponse(npc, response);
+  }
+
+  handleCrisisResponse(npc: any, action: string, crisis: any) {
+    let response = "";
+    
+    switch (action) {
+      case "give_food":
+        response = "Thank you! Oh thank you so much! *takes the food gratefully* You've saved my life! I won't forget this kindness!";
+        // TODO: Actually modify NPC's food need when we have that system
+        break;
+        
+      case "offer_protection":
+        response = "You would do that for me? *tears of relief* Thank you! I feel safer already knowing you're here to help.";
+        break;
+        
+      case "give_money":
+        response = "Bless you! This will help me get back on my feet. I promise I'll repay your kindness someday!";
+        break;
+        
+      case "comfort":
+        response = "*sniffles* Thank you for listening... Sometimes that's all we need, isn't it? Someone who cares...";
+        break;
+        
+      case "refuse_help":
+        if (crisis.severity === 'extreme') {
+          response = "*looks devastated* No... no, please! You're my last hope! I... I don't know what I'll do...";
+        } else {
+          response = "*looks disappointed* I... I understand. Everyone has their own problems. I'll... I'll figure something out.";
+        }
+        break;
+        
+      default:
+        response = "Thank you for trying to help. It means more than you know.";
+    }
     
     this.showNPCDialogueResponse(npc, response);
   }
@@ -1003,85 +1229,453 @@ class GameScene extends Phaser.Scene {
   }
 
   showNPCInfo(npc: any) {
-    // Show the NPC info in the persistent NPC info area
-    const avgNeed = (npc.needFood + npc.needSafety) / 2;
-    const personality = NPC_PERSONALITIES[npc.name];
+    // Track which NPC we're currently displaying
+    this.currentDisplayedNPC = npc;
     
-    let info = `📋 ${npc.name}\n\n`;
-    info += `Occupation: ${npc.occupation || "Villager"}\n`;
-    info += `Health: ${Math.round(avgNeed)}%\n`;
-    
-    // Add personality info if available
-    if (personality) {
-      const traits = personality.traits;
-      info += `\nPersonality:\n`;
-      if (traits.extraversion > 70) info += `  • Outgoing and talkative\n`;
-      else if (traits.extraversion < 30) info += `  • Quiet and reserved\n`;
+    // Generate and display the info
+    this.updateNPCInfoDisplay();
+  }
+
+  updateNPCInfoDisplay() {
+    if (!this.currentDisplayedNPC) return;
+
+    // Find the current NPC data in the world state (get fresh data)
+    const currentNPCData = this.worldData?.npcs?.find((n: any) => n.name === this.currentDisplayedNPC.name);
+    if (!currentNPCData) {
+      // NPC not found in current world data, use cached data
+      this.generateNPCInfoText(this.currentDisplayedNPC);
+      return;
+    }
+
+    // Use current world data for up-to-date stats
+    this.generateNPCInfoText(currentNPCData);
+  }
+
+  generateNPCInfoText(npc: any) {
+    // Clear existing content
+    if (this.npcInfoPanel) {
+      this.npcInfoPanel.removeAll(true);
       
-      if (traits.conscientiousness > 70) info += `  • Hardworking and reliable\n`;
-      if (traits.agreeableness > 70) info += `  • Helpful and caring\n`;
-      if (traits.neuroticism > 60) info += `  • Anxious and worried\n`;
-      else if (traits.neuroticism < 40) info += `  • Calm and stable\n`;
-    }
+      // Background
+      const bg = this.add.rectangle(0, 0, 380, 600, 0x000000, 0.8);
+      bg.setOrigin(0, 0);
+      this.npcInfoPanel.add(bg);
 
-    // Show behavior info if available
-    const behaviorNPC = this.cycleSystem.getNPC(npc.name);
-    if (behaviorNPC) {
-      const location = this.locationSystem.getLocation(
-        behaviorNPC.currentLocation
+      let yPos = 10;
+      
+      // Title
+      const title = this.add.text(10, yPos, `📋 ${npc.name}`, {
+        fontSize: "18px",
+        color: "#fff",
+        fontStyle: "bold"
+      });
+      this.npcInfoPanel.add(title);
+      yPos += 30;
+
+      // Occupation
+      const occupation = this.add.text(10, yPos, `Occupation: ${npc.occupation || "Villager"}`, {
+        fontSize: "14px",
+        color: "#ccc"
+      });
+      this.npcInfoPanel.add(occupation);
+      yPos += 25;
+
+      // Show behavior info if available
+      const behaviorNPC = this.cycleSystem.getNPC(npc.name);
+      if (behaviorNPC) {
+        const location = this.locationSystem.getLocation(behaviorNPC.currentLocation);
+        const locationText = this.add.text(10, yPos, `📍 Location: ${location?.name || "Unknown"}`, {
+          fontSize: "14px",
+          color: "#88ccff"
+        });
+        this.npcInfoPanel.add(locationText);
+        yPos += 20;
+
+        const activityText = this.add.text(10, yPos, `🎯 Activity: ${behaviorNPC.currentActivity}`, {
+          fontSize: "14px", 
+          color: "#88ccff"
+        });
+        this.npcInfoPanel.add(activityText);
+        yPos += 20;
+      }
+
+      // Show current production task or production status
+      const task = this.resourceManager.getNPCTask(npc.name);
+      if (task) {
+        const hoursLeft = task.endHour - this.worldData.currentHour;
+        const productionText = this.add.text(10, yPos, `🏭 Making: ${task.amount}x ${task.resource} (${hoursLeft}h left)`, {
+          fontSize: "14px",
+          color: "#ffaa44"
+        });
+        this.npcInfoPanel.add(productionText);
+        yPos += 20;
+      } else if (behaviorNPC && behaviorNPC.workplace) {
+        // Check if NPC can work based on location
+        const recipe = PRODUCTION_RECIPES[npc.occupation?.toLowerCase()];
+        if (recipe) {
+          if (behaviorNPC.currentLocation !== behaviorNPC.workplace) {
+            const productionText = this.add.text(10, yPos, `🏭 Cannot work: Not at workplace`, {
+              fontSize: "14px",
+              color: "#ff8888"
+            });
+            this.npcInfoPanel.add(productionText);
+            yPos += 20;
+          } else {
+            const productionText = this.add.text(10, yPos, `🏭 Ready to work: Can make ${recipe.amount}x ${recipe.produces}`, {
+              fontSize: "14px",
+              color: "#88ff88"
+            });
+            this.npcInfoPanel.add(productionText);
+            yPos += 20;
+          }
+        }
+      }
+
+      // Add personality info if available
+      const personality = NPC_PERSONALITIES[npc.name];
+      if (personality) {
+        const traits = personality.traits;
+        let personalityInfo = "🧠 Personality: ";
+        const traitsList = [];
+        
+        if (traits.extraversion > 70) traitsList.push("Outgoing");
+        else if (traits.extraversion < 30) traitsList.push("Reserved");
+        
+        if (traits.conscientiousness > 70) traitsList.push("Reliable");
+        if (traits.agreeableness > 70) traitsList.push("Helpful");
+        if (traits.neuroticism > 60) traitsList.push("Anxious");
+        else if (traits.neuroticism < 40) traitsList.push("Calm");
+
+        personalityInfo += traitsList.join(", ") || "Balanced";
+
+        const personalityText = this.add.text(10, yPos, personalityInfo, {
+          fontSize: "13px",
+          color: "#cc88ff"
+        });
+        this.npcInfoPanel.add(personalityText);
+        yPos += 20;
+      }
+
+      // Show goals if available
+      if (npc.goals && npc.goals.length > 0) {
+        const goalsText = this.add.text(10, yPos, `🎯 Goal: ${npc.goals[0].type} (Priority: ${npc.goals[0].priority})`, {
+          fontSize: "14px",
+          color: "#ffcc88"
+        });
+        this.npcInfoPanel.add(goalsText);
+        yPos += 20;
+      }
+
+      // Check for crisis
+      const crisis = detectCrisis(npc);
+      if (crisis) {
+        const crisisText = this.add.text(10, yPos, `⚠️ CRISIS: ${crisis.type.toUpperCase()} (${crisis.severity})`, {
+          fontSize: "14px",
+          color: "#ff4444",
+          fontStyle: "bold"
+        });
+        this.npcInfoPanel.add(crisisText);
+        yPos += 25;
+      }
+
+      // Testing mode toggle
+      yPos += 10;
+      const testingToggle = this.add.text(10, yPos, this.testingMode ? "🔧 Testing Mode: ON" : "🔧 Testing Mode: OFF", {
+        fontSize: "13px",
+        color: this.testingMode ? "#44ff44" : "#ff4444",
+        backgroundColor: "#333",
+        padding: { x: 6, y: 3 }
+      });
+      testingToggle.setInteractive();
+      testingToggle.on('pointerdown', () => {
+        this.testingMode = !this.testingMode;
+        this.generateNPCInfoText(npc); // Refresh to update button text
+      });
+      testingToggle.on('pointerover', () => {
+        testingToggle.setBackgroundColor("#555");
+      });
+      testingToggle.on('pointerout', () => {
+        testingToggle.setBackgroundColor("#333");
+      });
+      this.npcInfoPanel.add(testingToggle);
+      yPos += 25;
+
+      // Stats with buttons
+      yPos += 5;
+      const statsTitle = this.add.text(10, yPos, "📊 Needs (Click +/- to adjust):", {
+        fontSize: "14px",
+        color: "#fff",
+        fontStyle: "bold"
+      });
+      this.npcInfoPanel.add(statsTitle);
+      yPos += 25;
+
+      // Define stats to show with buttons
+      const statsToShow = [
+        { key: 'needFood', icon: '🍽️', label: 'Food' },
+        { key: 'needSafety', icon: '🛡️', label: 'Safety' },
+        { key: 'needWealth', icon: '💰', label: 'Wealth' },
+      ];
+
+      // Add behavior needs if available (reuse behaviorNPC from above)
+      if (behaviorNPC) {
+        statsToShow.push(
+          { key: 'needSocial', icon: '👥', label: 'Social' },
+          { key: 'needRest', icon: '😴', label: 'Rest' }
+        );
+      }
+
+      // Create stat rows with buttons
+      for (const stat of statsToShow) {
+        const value = (stat.key.includes('Social') || stat.key.includes('Rest')) && behaviorNPC 
+          ? behaviorNPC[stat.key] 
+          : npc[stat.key];
+        
+        this.createStatRow(stat.key, stat.icon, stat.label, value, 10, yPos);
+        yPos += 30;
+      }
+
+      // Emotions section
+      yPos += 10;
+      const emotionsTitle = this.add.text(10, yPos, "😊 Emotions:", {
+        fontSize: "14px", 
+        color: "#fff",
+        fontStyle: "bold"
+      });
+      this.npcInfoPanel.add(emotionsTitle);
+      yPos += 25;
+
+      const emotionStats = [
+        { key: 'emotionHappiness', icon: '😊', label: 'Happiness' },
+        { key: 'emotionFear', icon: '😰', label: 'Fear' }
+      ];
+
+      for (const emotion of emotionStats) {
+        this.createStatRow(emotion.key, emotion.icon, emotion.label, npc[emotion.key], 10, yPos);
+        yPos += 30;
+      }
+    }
+  }
+
+  createStatRow(statKey: string, icon: string, label: string, value: number, x: number, y: number): void {
+    if (!this.npcInfoPanel) return;
+
+    // Stat label and value
+    const statText = this.add.text(x, y, `${icon} ${label}: ${value}%`, {
+      fontSize: "14px",
+      color: "#fff"
+    });
+    this.npcInfoPanel.add(statText);
+
+    // Minus button
+    const minusBtn = this.add.text(x + 180, y, "  -  ", {
+      fontSize: "16px",
+      color: "#fff",
+      backgroundColor: "#ff4444",
+      padding: { x: 4, y: 2 }
+    });
+    minusBtn.setInteractive();
+    minusBtn.on('pointerdown', () => {
+      this.updateNPCStatValue(statKey, -5);
+    });
+    minusBtn.on('pointerover', () => {
+      minusBtn.setBackgroundColor("#ff6666");
+    });
+    minusBtn.on('pointerout', () => {
+      minusBtn.setBackgroundColor("#ff4444");
+    });
+    this.npcInfoPanel.add(minusBtn);
+
+    // Plus button  
+    const plusBtn = this.add.text(x + 220, y, "  +  ", {
+      fontSize: "16px", 
+      color: "#fff",
+      backgroundColor: "#44ff44",
+      padding: { x: 4, y: 2 }
+    });
+    plusBtn.setInteractive();
+    plusBtn.on('pointerdown', () => {
+      this.updateNPCStatValue(statKey, 5);
+    });
+    plusBtn.on('pointerover', () => {
+      plusBtn.setBackgroundColor("#66ff66");
+    });
+    plusBtn.on('pointerout', () => {
+      plusBtn.setBackgroundColor("#44ff44");
+    });
+    this.npcInfoPanel.add(plusBtn);
+  }
+
+  renderBuildings(): void {
+    // Clear existing building graphics
+    this.buildingGraphics.forEach(g => g.destroy());
+    this.buildingTexts.forEach(t => t.destroy());
+    this.buildingGraphics = [];
+    this.buildingTexts = [];
+
+    // Get all locations
+    const locations = this.locationSystem.getAllLocations();
+
+    for (const location of locations) {
+      // Choose building appearance based on type
+      let buildingColor = 0x8B4513; // Default brown
+      let buildingSize = { width: 80, height: 60 };
+      let emoji = "🏠";
+
+      switch (location.type) {
+        case 'home':
+          buildingColor = 0x8B4513; // Brown
+          buildingSize = { width: 70, height: 50 };
+          emoji = "🏠";
+          break;
+        case 'workplace':
+          buildingColor = 0x696969; // Gray
+          buildingSize = { width: 90, height: 70 };
+          if (location.name.includes("Forge")) emoji = "⚒️";
+          else if (location.name.includes("Bakery")) emoji = "🍞";
+          else if (location.name.includes("Healer")) emoji = "🌿";
+          else if (location.name.includes("Farm")) emoji = "🌾";
+          else if (location.name.includes("Lumber")) emoji = "🪓";
+          else if (location.name.includes("Mine")) emoji = "⛏️";
+          else emoji = "🏭";
+          break;
+        case 'tavern':
+          buildingColor = 0x8B0000; // Dark red
+          buildingSize = { width: 100, height: 80 };
+          emoji = "🍺";
+          break;
+        case 'market':
+          buildingColor = 0x228B22; // Green
+          buildingSize = { width: 120, height: 60 };
+          emoji = "🛒";
+          break;
+        case 'temple':
+          buildingColor = 0x4169E1; // Royal blue
+          buildingSize = { width: 80, height: 100 };
+          emoji = "⛪";
+          break;
+        case 'town-entrance':
+          buildingColor = 0x808080; // Gray
+          buildingSize = { width: 60, height: 40 };
+          emoji = "🚪";
+          break;
+      }
+
+      // Create building rectangle
+      const graphics = this.add.graphics();
+      graphics.fillStyle(buildingColor, 0.8);
+      graphics.fillRect(location.x, location.y, buildingSize.width, buildingSize.height);
+      
+      // Add border
+      graphics.lineStyle(2, 0xffffff, 0.8);
+      graphics.strokeRect(location.x, location.y, buildingSize.width, buildingSize.height);
+      
+      graphics.setDepth(50); // Below NPCs but above background
+      this.buildingGraphics.push(graphics);
+
+      // Add building name with emoji
+      const nameText = this.add.text(
+        location.x + buildingSize.width / 2,
+        location.y + buildingSize.height / 2,
+        `${emoji}\n${location.name}`,
+        {
+          fontSize: "12px",
+          color: "#fff",
+          backgroundColor: "#000000aa",
+          padding: { x: 4, y: 2 },
+          align: "center"
+        }
       );
-      info += `📍 Location: ${location?.name || "Unknown"}\n`;
-      info += `🎯 Activity: ${behaviorNPC.currentActivity}\n`;
-    }
+      nameText.setOrigin(0.5);
+      nameText.setDepth(51);
+      this.buildingTexts.push(nameText);
 
-    info += `\nNeeds:\n`;
-    info += `  🍽️ Food: ${npc.needFood}%\n`;
-    info += `  🛡️ Safety: ${npc.needSafety}%\n`;
-    info += `  💰 Wealth: ${npc.needWealth}%\n`;
-
-    if (behaviorNPC) {
-      info += `  👥 Social: ${behaviorNPC.needSocial}%\n`;
-      info += `  😴 Rest: ${behaviorNPC.needRest}%\n`;
-    }
-
-    info += `\nEmotions:\n`;
-    info += `  😊 Happy: ${npc.emotionHappiness}%\n`;
-    info += `  😢 Sad: ${npc.emotionSadness}%\n`;
-    info += `  😰 Fear: ${npc.emotionFear}%\n`;
-
-    if (npc.goals && npc.goals.length > 0) {
-      info += `\n🎯 Goals:\n`;
-      npc.goals.slice(0, 3).forEach((goal: any) => {
-        info += `  ${getGoalEmoji(goal.type)} ${goal.type} (${
-          goal.priority
-        })\n`;
+      // Make buildings clickable for info
+      graphics.setInteractive(
+        new Phaser.Geom.Rectangle(location.x, location.y, buildingSize.width, buildingSize.height),
+        Phaser.Geom.Rectangle.Contains
+      );
+      
+      graphics.on('pointerdown', () => {
+        this.showBuildingInfo(location);
+      });
+      
+      graphics.on('pointerover', () => {
+        graphics.setAlpha(0.9);
+      });
+      
+      graphics.on('pointerout', () => {
+        graphics.setAlpha(1.0);
       });
     }
 
-    // Show current production task
-    const task = this.resourceManager.getNPCTask(npc.name);
-    if (task) {
-      const hoursLeft = task.endHour - this.worldData.currentHour;
-      info += `\n🏭 Production:\n`;
-      info += `  Making: ${task.amount}x ${task.resource}\n`;
-      info += `  Time left: ${hoursLeft}h\n`;
-    } else {
-      const recipe = PRODUCTION_RECIPES[npc.occupation?.toLowerCase()];
-      if (recipe) {
-        info += `\n💭 Can make:\n`;
-        info += `  ${recipe.amount}x ${recipe.produces}\n`;
-        if (recipe.requires) {
-          info += `  Needs: `;
-          info += recipe.requires
-            .map((r) => `${r.amount}x ${r.resource}`)
-            .join(", ");
-          info += "\n";
-        }
-      }
-    }
+    console.log(`🏠 Rendered ${locations.length} buildings`);
+  }
 
-    // Update the NPC info area, not the status bar
-    this.npcInfoText?.setText(info);
+  showBuildingInfo(location: any): void {
+    // Clear displayed NPC when showing building info
+    this.currentDisplayedNPC = undefined;
+
+    if (this.npcInfoPanel) {
+      this.npcInfoPanel.removeAll(true);
+      
+      // Background
+      const bg = this.add.rectangle(0, 0, 380, 300, 0x000000, 0.8);
+      bg.setOrigin(0, 0);
+      this.npcInfoPanel.add(bg);
+
+      let yPos = 10;
+      
+      // Building title
+      const title = this.add.text(10, yPos, `🏢 ${location.name}`, {
+        fontSize: "18px",
+        color: "#fff",
+        fontStyle: "bold"
+      });
+      this.npcInfoPanel.add(title);
+      yPos += 30;
+
+      // Building type
+      const type = this.add.text(10, yPos, `Type: ${location.type}`, {
+        fontSize: "14px",
+        color: "#ccc"
+      });
+      this.npcInfoPanel.add(type);
+      yPos += 25;
+
+      // Description
+      const description = this.add.text(10, yPos, location.description, {
+        fontSize: "14px",
+        color: "#aaa",
+        wordWrap: { width: 350 }
+      });
+      this.npcInfoPanel.add(description);
+      yPos += 40;
+
+      // Show residents for homes
+      if (location.type === 'home' && location.residents && location.residents.length > 0) {
+        const residentsText = this.add.text(10, yPos, `👥 Residents: ${location.residents.join(', ')}`, {
+          fontSize: "14px",
+          color: "#88ccff"
+        });
+        this.npcInfoPanel.add(residentsText);
+        yPos += 25;
+
+        const capacityText = this.add.text(10, yPos, `📊 Capacity: ${location.residents.length}/${location.capacity || 'unlimited'}`, {
+          fontSize: "14px",
+          color: "#88ccff"
+        });
+        this.npcInfoPanel.add(capacityText);
+        yPos += 25;
+      }
+
+      // Show coordinates for debugging
+      const coordsText = this.add.text(10, yPos, `📍 Position: (${location.x}, ${location.y})`, {
+        fontSize: "12px",
+        color: "#666"
+      });
+      this.npcInfoPanel.add(coordsText);
+    }
   }
   
   updateStatusBar() {
@@ -1141,6 +1735,128 @@ class GameScene extends Phaser.Scene {
       if (newY >= margin && newY <= 1000 - margin) {
         this.player.y = newY;
       }
+      
+      // Check if player entered a crisis zone
+      if (this.locationCrisisSystem && (this.player.x !== this.lastPlayerPosition.x || this.player.y !== this.lastPlayerPosition.y)) {
+        const crisisEvent = this.locationCrisisSystem.checkPlayerInCrisisZone(this.player.x, this.player.y);
+        
+        if (crisisEvent) {
+          // Show crisis notification
+          this.showCrisisNotification(crisisEvent.message);
+          
+          // Apply effects to nearby NPCs
+          if (crisisEvent.npcEffects && this.worldData?.npcs) {
+            // Find the zone that triggered this event
+            const triggeredZone = CRISIS_ZONES.find(zone => 
+              this.player.x >= zone.x && 
+              this.player.x <= zone.x + zone.width && 
+              this.player.y >= zone.y && 
+              this.player.y <= zone.y + zone.height
+            );
+            
+            if (triggeredZone) {
+              // Convert world NPCs to format expected by crisis system
+              const npcSpritesArray = Array.from(this.npcSprites.entries()).map(([name, visual]) => ({
+                name,
+                sprite: visual.sprite,
+                ...this.worldData.npcs.find((n: any) => n.name === name)
+              }));
+              
+              const effectsList = this.locationCrisisSystem.applyCrisisEffectsToNPCs(
+                triggeredZone,
+                crisisEvent,
+                npcSpritesArray
+              );
+              
+              // Show floating text for each affected NPC
+              for (const effectString of effectsList) {
+                const [npcName, effects] = effectString.split(':');
+                const npcVisual = this.npcSprites.get(npcName);
+                
+                if (npcVisual) {
+                  this.showNPCEffectText(npcVisual.sprite, effects.split('|'));
+                }
+              }
+              
+              // Update NPC info display if we're viewing an affected NPC
+              this.updateNPCInfoDisplay();
+            }
+          }
+        }
+        
+        this.lastPlayerPosition = { x: this.player.x, y: this.player.y };
+      }
+    }
+  }
+  
+  showCrisisNotification(message: string) {
+    // Create notification text at top center
+    const notification = this.add.text(800, 100, message, {
+      fontSize: "20px",
+      color: "#ff0000",
+      backgroundColor: "#000000dd",
+      padding: { x: 20, y: 10 }
+    });
+    notification.setOrigin(0.5);
+    notification.setDepth(2000);
+    notification.setScrollFactor(0); // Keep it on screen
+    
+    // Pulse effect
+    this.tweens.add({
+      targets: notification,
+      scale: 1.1,
+      duration: 500,
+      yoyo: true,
+      repeat: 2
+    });
+    
+    // Remove after 3 seconds
+    this.time.delayedCall(3000, () => {
+      notification.destroy();
+    });
+  }
+  
+  showNPCEffectText(npcSprite: Phaser.GameObjects.Sprite, effects: string[]) {
+    let yOffset = -60;
+    
+    for (const effect of effects) {
+      // Determine color based on effect type
+      let color = "#ffffff";
+      if (effect.includes("-")) {
+        color = "#ff4444"; // Red for negative
+      } else if (effect.includes("+")) {
+        color = "#44ff44"; // Green for positive
+      }
+      
+      // Create floating text
+      const floatingText = this.add.text(
+        npcSprite.x,
+        npcSprite.y + yOffset,
+        effect,
+        {
+          fontSize: "16px",
+          color: color,
+          stroke: "#000000",
+          strokeThickness: 3,
+          fontStyle: "bold"
+        }
+      );
+      floatingText.setOrigin(0.5);
+      floatingText.setDepth(1500);
+      
+      // Animate floating up and fading
+      this.tweens.add({
+        targets: floatingText,
+        y: floatingText.y - 50,
+        alpha: 0,
+        duration: 2000,
+        ease: 'Power2',
+        onComplete: () => {
+          floatingText.destroy();
+        }
+      });
+      
+      yOffset -= 20; // Stack multiple effects
     }
   }
 }

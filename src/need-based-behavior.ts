@@ -198,14 +198,14 @@ export class NeedBasedBehavior {
   decayNeeds(npc: NPCBehaviorState, hours: number): void {
     const decayRate = {
       food: 8, // Decay 8 per checkpoint (gets hungry)
-      safety: 2, // Decay 2 per checkpoint (slight anxiety)
+      // safety: 2, // REMOVED - safety only decreases from actual threats
       wealth: 5, // Decay 5 per checkpoint (needs money)
       social: 6, // Decay 6 per checkpoint (gets lonely)
       rest: 10, // Decay 10 per checkpoint (gets tired)
     };
 
     npc.needFood = Math.max(0, npc.needFood - decayRate.food);
-    npc.needSafety = Math.max(0, npc.needSafety - decayRate.safety);
+    // npc.needSafety = Math.max(0, npc.needSafety - decayRate.safety); // REMOVED
     npc.needWealth = Math.max(0, npc.needWealth - decayRate.wealth);
     npc.needSocial = Math.max(0, npc.needSocial - decayRate.social);
     npc.needRest = Math.max(0, npc.needRest - decayRate.rest);
@@ -225,7 +225,7 @@ export class NeedBasedBehavior {
       eating: { food: 30, social: 5 }, // Gain food, bit of social
       socializing: { social: 20, food: -3 }, // Gain social, bit hungry
       resting: { rest: 40, food: -5 }, // Gain rest, bit hungry
-      fleeing: { safety: -10 }, // Safety keeps dropping while fleeing
+      fleeing: {}, // No automatic safety loss while fleeing
       idle: { rest: 10, social: -2 }, // Slight rest, bit lonely
     };
 

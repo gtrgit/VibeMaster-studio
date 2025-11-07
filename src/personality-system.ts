@@ -1,5 +1,7 @@
 // Personality system for NPCs - Based on Big Five personality traits
 
+import { detectCrisis, getCrisisGreeting, getCrisisWellbeingResponse, getCrisisOccupationResponse } from './crisis-system';
+
 export interface PersonalityTraits {
   openness: number;          // 0-100 (creative, curious, open to new experiences)
   conscientiousness: number; // 0-100 (organized, dependable, disciplined)
@@ -76,6 +78,12 @@ export function getPersonalityDescription(traits: PersonalityTraits): string[] {
 
 // Get personality-based greeting
 export function getPersonalityGreeting(npc: any, personality: NPCPersonality): string {
+  // Check for crisis first
+  const crisis = detectCrisis(npc);
+  if (crisis) {
+    return getCrisisGreeting(npc, crisis);
+  }
+
   const traits = personality.traits;
   
   // High extraversion - enthusiastic greeting
@@ -89,7 +97,7 @@ export function getPersonalityGreeting(npc: any, personality: NPCPersonality): s
   
   // Low extraversion - reserved greeting
   else if (traits.extraversion < 40) {
-    if (npc.emotionHappiness > 70) {
+    if (npc.emotionHappiness > 60) {
       return `${npc.name}: "Oh... hello. It's nice to see you."`;
     } else {
       return `${npc.name}: "Yes? What do you need?"`;
@@ -98,7 +106,7 @@ export function getPersonalityGreeting(npc: any, personality: NPCPersonality): s
   
   // Medium extraversion - balanced greeting
   else {
-    if (npc.emotionHappiness > 70) {
+    if (npc.emotionHappiness > 60) {
       return `${npc.name}: "Hello there! Good to see you. What brings you by?"`;
     } else {
       return `${npc.name}: "Hello. How can I help you?"`;
@@ -108,14 +116,20 @@ export function getPersonalityGreeting(npc: any, personality: NPCPersonality): s
 
 // Get personality-based response to "How are you?"
 export function getPersonalityWellbeingResponse(npc: any, personality: NPCPersonality): string {
+  // Check for crisis first
+  const crisis = detectCrisis(npc);
+  if (crisis) {
+    return getCrisisWellbeingResponse(npc, crisis);
+  }
+
   const traits = personality.traits;
   const avgNeed = (npc.needFood + npc.needSafety) / 2;
   
   // High neuroticism - more dramatic/worried responses
   if (traits.neuroticism > 60) {
-    if (avgNeed < 30) {
+    if (npc.emotionHappiness < 25) {
       return "I'm absolutely terrible! Everything is falling apart! I don't know how much longer I can go on like this!";
-    } else if (avgNeed < 60) {
+    } else if (npc.emotionHappiness < 50) {
       return "I'm so worried about everything... The future seems uncertain and I can't stop thinking about what might go wrong.";
     } else {
       return "I'm doing alright, I suppose, but I can't help worrying about what tomorrow might bring...";
@@ -124,9 +138,9 @@ export function getPersonalityWellbeingResponse(npc: any, personality: NPCPerson
   
   // Low neuroticism - calmer responses
   else if (traits.neuroticism < 40) {
-    if (avgNeed < 30) {
+    if (npc.emotionHappiness < 25) {
       return "Times are tough, but I'm managing. I've been through worse and I'll get through this too.";
-    } else if (avgNeed < 60) {
+    } else if (npc.emotionHappiness < 50) {
       return "Things could be better, but I'm staying positive. No point in worrying too much.";
     } else {
       return "I'm doing quite well, thank you. Life has its ups and downs, but overall I can't complain.";
@@ -135,9 +149,9 @@ export function getPersonalityWellbeingResponse(npc: any, personality: NPCPerson
   
   // Medium neuroticism - balanced responses
   else {
-    if (avgNeed < 30) {
+    if (npc.emotionHappiness < 25) {
       return "I'm struggling, to be honest. These are difficult times and I could really use some help.";
-    } else if (avgNeed < 60) {
+    } else if (npc.emotionHappiness < 50) {
       return "I'm managing, though things have been challenging lately. But I'm hopeful they'll improve.";
     } else {
       return "I'm doing well, thank you for asking. Life is treating me fairly these days.";
@@ -147,6 +161,12 @@ export function getPersonalityWellbeingResponse(npc: any, personality: NPCPerson
 
 // Get personality-based occupation response
 export function getPersonalityOccupationResponse(npc: any, personality: NPCPersonality, task: any, currentHour?: number): string {
+  // Check for crisis first
+  const crisis = detectCrisis(npc);
+  if (crisis) {
+    return getCrisisOccupationResponse(npc, crisis);
+  }
+
   const traits = personality.traits;
   const occupation = npc.occupation || "Villager";
   

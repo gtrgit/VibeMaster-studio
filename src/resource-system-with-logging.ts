@@ -246,17 +246,28 @@ export class ResourceManager {
   }
 
   /**
-   * ENHANCED: Start production with detailed logging
+   * ENHANCED: Start production with detailed logging and workplace check
    */
   startProduction(
     npcName: string,
     occupation: string,
     currentHour: number,
-    storageId?: string
+    storageId?: string,
+    npcLocation?: string,
+    npcWorkplace?: string
   ): ProductionTask | null {
     const occupationLower = occupation?.toLowerCase();
 
     console.log(`\n💭 ${npcName} (${occupation}) is thinking...`);
+
+    // Check if NPC is at their workplace
+    if (npcLocation && npcWorkplace && npcLocation !== npcWorkplace) {
+      console.log(`   ❌ Cannot work! Not at workplace.`);
+      console.log(`   📍 Current location: ${npcLocation}`);
+      console.log(`   🏭 Workplace: ${npcWorkplace}`);
+      console.log(`   💡 Must be at workplace to produce goods!`);
+      return null;
+    }
 
     // Check if has recipe
     const recipe = PRODUCTION_RECIPES[occupationLower];

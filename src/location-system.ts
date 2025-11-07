@@ -16,12 +16,12 @@ export class LocationSystem {
    * Initialize default locations
    */
   private initializeLocations(): void {
-    // Shared Homes (multiple NPCs per house)
+    // Shared Homes (multiple NPCs per house) - moved away from NPC info panel
     this.addLocation({
       id: "cottage-1",
       name: "Riverside Cottage",
       type: "home",
-      x: 300,
+      x: 900, // Moved 100px left (1000→900)
       y: 200,
       capacity: 3,
       residents: [], // Will be assigned
@@ -33,7 +33,7 @@ export class LocationSystem {
       id: "cottage-2",
       name: "Mill House",
       type: "home",
-      x: 350,
+      x: 1100,
       y: 250,
       capacity: 2,
       residents: [],
@@ -45,7 +45,7 @@ export class LocationSystem {
       id: "cottage-3",
       name: "Forest Edge Home",
       type: "home",
-      x: 280,
+      x: 1050,
       y: 180,
       capacity: 3,
       residents: [],
@@ -58,8 +58,8 @@ export class LocationSystem {
       id: "blacksmith-shop",
       name: "Marcus's Forge",
       type: "workplace",
-      x: 500,
-      y: 300,
+      x: 400, // Moved 100px left (500→400)
+      y: 450, // Moved 100px down (350→450)
       description: "A hot forge with the sound of hammering",
       ambience: "hammer-anvil",
     });
@@ -69,7 +69,7 @@ export class LocationSystem {
       name: "The Village Bakery",
       type: "workplace",
       x: 550,
-      y: 350,
+      y: 550, // Moved 200px down
       description: "Warm ovens and the smell of fresh bread",
       ambience: "oven-crackling",
     });
@@ -108,8 +108,8 @@ export class LocationSystem {
       id: "mine",
       name: "Stone Mine",
       type: "workplace",
-      x: 800,
-      y: 350,
+      x: 900, // Moved 100px right
+      y: 550, // Moved 200px down
       description: "A dark entrance into the hillside",
       ambience: "pickaxe-echo",
     });
@@ -129,7 +129,7 @@ export class LocationSystem {
       id: "market",
       name: "Village Market",
       type: "market",
-      x: 650,
+      x: 750, // Moved 100px right
       y: 380,
       description: "A bustling market square with vendors and shoppers",
       ambience: "market-bustle",
@@ -139,7 +139,7 @@ export class LocationSystem {
       id: "temple",
       name: "Village Temple",
       type: "temple",
-      x: 550,
+      x: 750, // Moved 200px right
       y: 250,
       description: "A peaceful temple for reflection and prayer",
       ambience: "temple-bells",

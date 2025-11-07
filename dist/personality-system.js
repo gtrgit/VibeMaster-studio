@@ -6,6 +6,7 @@ exports.getPersonalityDescription = getPersonalityDescription;
 exports.getPersonalityGreeting = getPersonalityGreeting;
 exports.getPersonalityWellbeingResponse = getPersonalityWellbeingResponse;
 exports.getPersonalityOccupationResponse = getPersonalityOccupationResponse;
+const crisis_system_1 = require("./crisis-system");
 // Predefined personalities for our NPCs
 exports.NPC_PERSONALITIES = {
     "Marcus": {
@@ -71,6 +72,11 @@ function getPersonalityDescription(traits) {
 }
 // Get personality-based greeting
 function getPersonalityGreeting(npc, personality) {
+    // Check for crisis first
+    const crisis = (0, crisis_system_1.detectCrisis)(npc);
+    if (crisis) {
+        return (0, crisis_system_1.getCrisisGreeting)(npc, crisis);
+    }
     const traits = personality.traits;
     // High extraversion - enthusiastic greeting
     if (traits.extraversion > 70) {
@@ -102,6 +108,11 @@ function getPersonalityGreeting(npc, personality) {
 }
 // Get personality-based response to "How are you?"
 function getPersonalityWellbeingResponse(npc, personality) {
+    // Check for crisis first
+    const crisis = (0, crisis_system_1.detectCrisis)(npc);
+    if (crisis) {
+        return (0, crisis_system_1.getCrisisWellbeingResponse)(npc, crisis);
+    }
     const traits = personality.traits;
     const avgNeed = (npc.needFood + npc.needSafety) / 2;
     // High neuroticism - more dramatic/worried responses
@@ -143,6 +154,11 @@ function getPersonalityWellbeingResponse(npc, personality) {
 }
 // Get personality-based occupation response
 function getPersonalityOccupationResponse(npc, personality, task, currentHour) {
+    // Check for crisis first
+    const crisis = (0, crisis_system_1.detectCrisis)(npc);
+    if (crisis) {
+        return (0, crisis_system_1.getCrisisOccupationResponse)(npc, crisis);
+    }
     const traits = personality.traits;
     const occupation = npc.occupation || "Villager";
     // High conscientiousness - detailed and proud of work

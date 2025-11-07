@@ -10,6 +10,7 @@ const resource_ui_1 = require("./resource-ui");
 const location_system_1 = require("./location-system");
 const daily_cycle_system_1 = require("./daily-cycle-system");
 const personality_system_1 = require("./personality-system");
+const crisis_system_1 = require("./crisis-system");
 // Simple runtime check for Tauri without type issues
 const isTauri = typeof window !== "undefined" && window.__TAURI__ !== undefined;
 // Dev server URL for browser mode
@@ -73,6 +74,10 @@ class GameScene extends phaser_1.default.Scene {
     conversationPanel;
     isInConversation = false;
     currentConversationNPC;
+    // NPC positioning jitter (stable per NPC)
+    npcJitterOffsets = new Map();
+    // Track currently displayed NPC for auto-updating info panel
+    currentDisplayedNPC;
     // Resource system
     resourceManager;
     resourcePanel;
@@ -164,6 +169,8 @@ class GameScene extends phaser_1.default.Scene {
     }
     onStorageClick(storage) {
         console.log("Clicked storage:", storage.name);
+        // Clear displayed NPC when showing storage info
+        this.currentDisplayedNPC = undefined;
         let info = `🏢 ${storage.name}\n\n`;
         info += `Capacity: ${storage.getTotalStored()}/${storage.capacity}\n`;
         info += `Fill: ${storage.getFillPercent().toFixed(1)}%\n\n`;
@@ -291,7 +298,7 @@ class GameScene extends phaser_1.default.Scene {
             }
         }
         // NPC Info display (new container in top-left where status used to be)
-        this.npcInfoText = this.add.text(20, 60, "Click an NPC to see their info", {
+        this.npcInfoText = this.add.text(20, 60, "Click an NPC to see their info\n\nStats will update in real-time\nwhen viewing NPC details", {
             fontSize: "16px",
             color: "#fff",
             backgroundColor: "#00000088",
@@ -480,6 +487,8 @@ class GameScene extends phaser_1.default.Scene {
         // Update horizontal status bar
         const statusText = `📅 Day ${currentDay}, ${currentHour}:00 | 👥 ${npcs?.length || 0} NPCs | 📦 ${this.resourceManager.getSummary().length} resources | 🏭 ${this.resourceManager.getActiveTasks().length} working`;
         this.statusText?.setText(statusText);
+        // Update NPC info panel if one is currently displayed
+        this.updateNPCInfoDisplay();
         if (npcs && npcs.length > 0) {
             this.renderNPCs(npcs);
         }
@@ -505,14 +514,24 @@ class GameScene extends phaser_1.default.Scene {
                 if (location) {
                     x = location.x;
                     y = location.y;
-                    // Offset multiple NPCs at same location
+                    // Add stable jitter to workplace locations + offset for multiple NPCs
                     const npcsAtLocation = this.cycleSystem.getNPCsAtLocation(behaviorNPC.currentLocation);
                     const npcIndex = npcsAtLocation.findIndex((n) => n.name === npc.name);
+                    // Get or create stable jitter offset for this NPC
+                    if (!this.npcJitterOffsets.has(npc.name)) {
+                        this.npcJitterOffsets.set(npc.name, {
+                            x: (Math.random() - 0.5) * 200, // -100 to +100
+                            y: (Math.random() - 0.5) * 200 // -100 to +100
+                        });
+                    }
+                    const jitter = this.npcJitterOffsets.get(npc.name);
+                    x += jitter.x;
+                    y += jitter.y;
                     if (npcIndex > 0) {
-                        // Spread NPCs slightly if multiple at same location
+                        // Additional spread for multiple NPCs at same location
                         const offsetAngle = (npcIndex / npcsAtLocation.length) * Math.PI * 2;
-                        x += Math.cos(offsetAngle) * 30;
-                        y += Math.sin(offsetAngle) * 30;
+                        x += Math.cos(offsetAngle) * 80;
+                        y += Math.sin(offsetAngle) * 80;
                     }
                 }
             }
@@ -674,13 +693,26 @@ class GameScene extends phaser_1.default.Scene {
             fontStyle: "bold",
             wordWrap: { width: panelWidth - 40 },
         });
-        // Conversation options
-        const options = [
-            { text: "How are you doing?", callback: () => this.showWellbeingResponse(npc) },
-            { text: "What do you do here?", callback: () => this.showOccupationResponse(npc) },
-            { text: "Show NPC Info", callback: () => { this.closeConversation(); this.showNPCInfo(npc); } },
-            { text: "Goodbye", callback: () => this.closeConversation() }
-        ];
+        // Conversation options - check for crisis
+        const crisis = (0, crisis_system_1.detectCrisis)(npc);
+        let options = [];
+        if (crisis && (0, crisis_system_1.shouldInterruptForCrisis)(crisis)) {
+            // Crisis dialogue options
+            const crisisOptions = (0, crisis_system_1.getCrisisDialogueOptions)(npc, crisis);
+            options = crisisOptions.map(opt => ({
+                text: opt.text,
+                callback: () => this.handleCrisisResponse(npc, opt.action, crisis)
+            }));
+        }
+        else {
+            // Normal dialogue options
+            options = [
+                { text: "How are you doing?", callback: () => this.showWellbeingResponse(npc) },
+                { text: "What do you do here?", callback: () => this.showOccupationResponse(npc) },
+                { text: "Show NPC Info", callback: () => { this.closeConversation(); this.showNPCInfo(npc); } },
+                { text: "Goodbye", callback: () => this.closeConversation() }
+            ];
+        }
         let buttonY = panelY + 150; // Moved down to give more space for greeting
         const buttons = [];
         options.forEach((option, index) => {
@@ -714,6 +746,35 @@ class GameScene extends phaser_1.default.Scene {
         const response = personality
             ? (0, personality_system_1.getPersonalityOccupationResponse)(npc, personality, task, currentHour)
             : this.getBasicOccupationResponse(npc);
+        this.showNPCDialogueResponse(npc, response);
+    }
+    handleCrisisResponse(npc, action, crisis) {
+        let response = "";
+        switch (action) {
+            case "give_food":
+                response = "Thank you! Oh thank you so much! *takes the food gratefully* You've saved my life! I won't forget this kindness!";
+                // TODO: Actually modify NPC's food need when we have that system
+                break;
+            case "offer_protection":
+                response = "You would do that for me? *tears of relief* Thank you! I feel safer already knowing you're here to help.";
+                break;
+            case "give_money":
+                response = "Bless you! This will help me get back on my feet. I promise I'll repay your kindness someday!";
+                break;
+            case "comfort":
+                response = "*sniffles* Thank you for listening... Sometimes that's all we need, isn't it? Someone who cares...";
+                break;
+            case "refuse_help":
+                if (crisis.severity === 'extreme') {
+                    response = "*looks devastated* No... no, please! You're my last hope! I... I don't know what I'll do...";
+                }
+                else {
+                    response = "*looks disappointed* I... I understand. Everyone has their own problems. I'll... I'll figure something out.";
+                }
+                break;
+            default:
+                response = "Thank you for trying to help. It means more than you know.";
+        }
         this.showNPCDialogueResponse(npc, response);
     }
     showNPCDialogueResponse(npc, responseText) {
@@ -781,12 +842,38 @@ class GameScene extends phaser_1.default.Scene {
         }
     }
     showNPCInfo(npc) {
+        // Track which NPC we're currently displaying
+        this.currentDisplayedNPC = npc;
+        // Generate and display the info
+        this.updateNPCInfoDisplay();
+    }
+    updateNPCInfoDisplay() {
+        if (!this.currentDisplayedNPC)
+            return;
+        // Find the current NPC data in the world state (get fresh data)
+        const currentNPCData = this.worldData?.npcs?.find((n) => n.name === this.currentDisplayedNPC.name);
+        if (!currentNPCData) {
+            // NPC not found in current world data, use cached data
+            this.generateNPCInfoText(this.currentDisplayedNPC);
+            return;
+        }
+        // Use current world data for up-to-date stats
+        this.generateNPCInfoText(currentNPCData);
+    }
+    generateNPCInfoText(npc) {
         // Show the NPC info in the persistent NPC info area
         const avgNeed = (npc.needFood + npc.needSafety) / 2;
         const personality = personality_system_1.NPC_PERSONALITIES[npc.name];
         let info = `📋 ${npc.name}\n\n`;
         info += `Occupation: ${npc.occupation || "Villager"}\n`;
         info += `Health: ${Math.round(avgNeed)}%\n`;
+        // Check for crisis
+        const crisis = (0, crisis_system_1.detectCrisis)(npc);
+        if (crisis) {
+            info += `\n⚠️ CRISIS: ${crisis.type.toUpperCase()}\n`;
+            info += `Severity: ${crisis.severity}\n`;
+            info += `Urgency: ${crisis.urgency}%\n`;
+        }
         // Add personality info if available
         if (personality) {
             const traits = personality.traits;
