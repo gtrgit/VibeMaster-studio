@@ -6,6 +6,7 @@ import {
   NPCDecision,
 } from "./need-based-behavior";
 import { LocationSystem } from "./location-system";
+import { applyBuildingEffects } from "./building-effects";
 
 /**
  * Daily cycle with 4 checkpoints: Dawn, Midday, Evening, Night
@@ -15,6 +16,8 @@ export class DailyCycleSystem {
   private locationSystem: LocationSystem;
   private npcs: Map<string, NPCBehaviorState> = new Map();
   private lastCheckpointHour: number = -1;
+  private messageCallback?: (npcName: string, message: string) => void;
+  private movementCallback?: (npcName: string, toLocationId: string) => void;
 
   // 4 checkpoints per day
   readonly CHECKPOINTS = [6, 12, 18, 22];
@@ -28,6 +31,14 @@ export class DailyCycleSystem {
   constructor(locationSystem: LocationSystem) {
     this.behaviorSystem = new NeedBasedBehavior();
     this.locationSystem = locationSystem;
+  }
+
+  setMessageCallback(callback: (npcName: string, message: string) => void): void {
+    this.messageCallback = callback;
+  }
+
+  setMovementCallback(callback: (npcName: string, toLocationId: string) => void): void {
+    this.movementCallback = callback;
   }
 
   /**
@@ -50,10 +61,29 @@ export class DailyCycleSystem {
       }
     }
 
+    // Set spatial coordinates based on assigned locations
+    if (npc.home) {
+      const homeLoc = this.locationSystem.getLocation(npc.home);
+      if (homeLoc) {
+        npc.homeX = homeLoc.x;
+        npc.homeY = homeLoc.y;
+      }
+    }
+    
+    if (npc.workplace) {
+      const workLoc = this.locationSystem.getLocation(npc.workplace);
+      if (workLoc) {
+        npc.workX = workLoc.x;
+        npc.workY = workLoc.y;
+      }
+    }
+
     // Set initial location to home
     if (!npc.currentLocation) {
       npc.currentLocation = npc.home;
       npc.currentActivity = "resting";
+      npc.currentX = npc.homeX;
+      npc.currentY = npc.homeY;
     }
 
     this.npcs.set(npc.name, npc);
@@ -96,6 +126,9 @@ export class DailyCycleSystem {
     if (isCheckpoint && newHour !== this.lastCheckpointHour) {
       this.runCheckpoint(newHour);
       this.lastCheckpointHour = newHour;
+    } else {
+      // Run a lighter evaluation every hour for activity changes
+      this.runHourlyEvaluation(newHour);
     }
   }
 
@@ -149,11 +182,19 @@ export class DailyCycleSystem {
       const newLocation = decision.location;
 
       if (oldLocation !== newLocation) {
+        const oldActivity = npc.currentActivity;
         npc.currentLocation = newLocation;
         npc.currentActivity = decision.activity;
 
         const fromLoc = this.locationSystem.getLocation(oldLocation);
         const toLoc = this.locationSystem.getLocation(newLocation);
+
+        // Update spatial coordinates (final destination)
+        if (toLoc) {
+          // Note: Visual position will be updated by tween, but we set the logical position
+          npc.currentX = toLoc.x;
+          npc.currentY = toLoc.y;
+        }
 
         console.log(
           `   🚶 ${npcName}: ${fromLoc?.name || oldLocation} → ${
@@ -163,13 +204,29 @@ export class DailyCycleSystem {
         console.log(
           `      Activity: ${decision.activity} (${decision.reason})`
         );
+
+        // Trigger movement animation
+        this.movementCallback?.(npcName, newLocation);
+
+        // Log activity change
+        const locationName = toLoc?.name || newLocation;
+        this.messageCallback?.(npcName, `Moved to ${locationName}`);
+        if (oldActivity !== decision.activity) {
+          this.messageCallback?.(npcName, `Started ${decision.activity}`);
+        }
       } else {
+        const oldActivity = npc.currentActivity;
         console.log(
           `   ⏸️  ${npcName}: Staying at ${
             this.locationSystem.getLocation(newLocation)?.name || newLocation
           }`
         );
         npc.currentActivity = decision.activity;
+        
+        // Log activity change if different
+        if (oldActivity !== decision.activity) {
+          this.messageCallback?.(npcName, `Started ${decision.activity}`);
+        }
       }
     }
 
@@ -178,6 +235,85 @@ export class DailyCycleSystem {
     this.logLocationOccupancy();
 
     console.log(`\n${"=".repeat(70)}\n`);
+  }
+
+  /**
+   * Run hourly evaluation - allows NPCs to change activities between checkpoints
+   */
+  private runHourlyEvaluation(hour: number): void {
+    console.log(`\n⏰ Hour ${hour} - Hourly activity check`);
+
+    for (const npc of this.npcs.values()) {
+      const oldActivity = npc.currentActivity;
+      
+      // Special handling for eating - should only last 1 hour
+      if (npc.currentActivity === "eating" && npc.needFood > 70) {
+        console.log(`   ${npc.name}: Finished eating (Food: ${npc.needFood}%)`);
+        
+        // Re-evaluate what to do next
+        const decision = this.behaviorSystem.decideAction(npc, hour);
+        
+        if (decision.activity !== oldActivity) {
+          npc.currentActivity = decision.activity;
+          
+          // Move if needed
+          if (decision.location !== npc.currentLocation) {
+            const fromLoc = this.locationSystem.getLocation(npc.currentLocation);
+            const toLoc = this.locationSystem.getLocation(decision.location);
+            
+            npc.currentLocation = decision.location;
+            
+            // Update spatial coordinates (final destination)
+            if (toLoc) {
+              npc.currentX = toLoc.x;
+              npc.currentY = toLoc.y;
+            }
+            
+            console.log(`   ${npc.name}: ${fromLoc?.name} → ${toLoc?.name}`);
+            
+            // Trigger movement animation
+            this.movementCallback?.(npc.name, decision.location);
+            
+            this.messageCallback?.(npc.name, `Moved to ${toLoc?.name || decision.location}`);
+          }
+          
+          this.messageCallback?.(npc.name, `Started ${decision.activity}`);
+          console.log(`   ${npc.name}: Now ${decision.activity}`);
+        }
+      }
+      
+      // Also re-evaluate if activity is "idle"
+      else if (npc.currentActivity === "idle") {
+        const decision = this.behaviorSystem.decideAction(npc, hour);
+        
+        if (decision.activity !== oldActivity) {
+          npc.currentActivity = decision.activity;
+          
+          if (decision.location !== npc.currentLocation) {
+            const fromLoc = this.locationSystem.getLocation(npc.currentLocation);
+            const toLoc = this.locationSystem.getLocation(decision.location);
+            
+            npc.currentLocation = decision.location;
+            
+            // Update spatial coordinates (final destination)
+            if (toLoc) {
+              npc.currentX = toLoc.x;
+              npc.currentY = toLoc.y;
+            }
+            
+            console.log(`   ${npc.name}: ${fromLoc?.name} → ${toLoc?.name}`);
+            
+            // Trigger movement animation
+            this.movementCallback?.(npc.name, decision.location);
+            
+            this.messageCallback?.(npc.name, `Moved to ${toLoc?.name || decision.location}`);
+          }
+          
+          this.messageCallback?.(npc.name, `Started ${decision.activity}`);
+          console.log(`   ${npc.name}: Now ${decision.activity}`);
+        }
+      }
+    }
   }
 
   /**
@@ -228,7 +364,18 @@ export class DailyCycleSystem {
    */
   updateNPCNeeds(): void {
     for (const npc of this.npcs.values()) {
-      this.behaviorSystem.recoverNeeds(npc, npc.currentActivity);
+      // Apply activity-based recovery
+      this.behaviorSystem.recoverNeeds(npc, npc.currentActivity, this.messageCallback);
+      
+      // Apply building-based effects
+      const location = this.locationSystem.getLocation(npc.currentLocation);
+      if (location?.type) {
+        // Count other NPCs at the same location
+        const otherNPCs = this.getNPCsAtLocation(npc.currentLocation).length - 1;
+        
+        // Apply building effects with social bonus
+        applyBuildingEffects(npc, location.type, otherNPCs, this.messageCallback);
+      }
     }
   }
 

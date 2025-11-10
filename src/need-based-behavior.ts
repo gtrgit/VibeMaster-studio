@@ -46,6 +46,14 @@ export interface NPCBehaviorState {
   // Assigned locations
   home: string;
   workplace: string;
+  
+  // Spatial coordinates
+  homeX?: number;
+  homeY?: number;
+  workX?: number;
+  workY?: number;
+  currentX?: number;
+  currentY?: number;
 }
 
 export interface NPCDecision {
@@ -81,13 +89,13 @@ export class NeedBasedBehavior {
       `   Needs: Food(${npc.needFood}) Safety(${npc.needSafety}) Wealth(${npc.needWealth}) Social(${npc.needSocial}) Rest(${npc.needRest})`
     );
 
-    // CRITICAL: Security override - flee if in danger!
+    // CRITICAL: Security override - flee home if in danger!
     if (npc.needSafety < THRESHOLDS.SECURITY_CRITICAL) {
-      console.log(`   ⚠️  CRITICAL SECURITY! Fleeing to safety!`);
+      console.log(`   ⚠️  CRITICAL SECURITY! Fleeing home to safety!`);
       return {
-        location: "town-entrance",
+        location: npc.home,
         activity: "fleeing",
-        reason: `Security critical (${npc.needSafety}%) - fleeing to town entrance`,
+        reason: `Security critical (${npc.needSafety}%) - fleeing home for safety`,
         priority: 1000, // Highest priority
       };
     }
@@ -219,7 +227,7 @@ export class NeedBasedBehavior {
   /**
    * Recover needs based on current activity
    */
-  recoverNeeds(npc: NPCBehaviorState, activity: ActivityType): void {
+  recoverNeeds(npc: NPCBehaviorState, activity: ActivityType, messageCallback?: (npcName: string, message: string) => void): void {
     const recovery = {
       working: { wealth: 15, rest: -5 }, // Gain wealth, lose rest
       eating: { food: 30, social: 5 }, // Gain food, bit of social
@@ -230,6 +238,15 @@ export class NeedBasedBehavior {
     };
 
     const changes = recovery[activity] || {};
+    const statIcons: Record<string, string> = {
+      food: '🍽️',
+      safety: '🛡️', 
+      wealth: '💰',
+      social: '👥',
+      rest: '😴'
+    };
+
+    const changeIcons: string[] = [];
 
     for (const [need, amount] of Object.entries(changes)) {
       const needKey = `need${
@@ -237,9 +254,19 @@ export class NeedBasedBehavior {
       }` as keyof NPCBehaviorState;
       const current = npc[needKey] as number;
       (npc[needKey] as number) = Math.min(100, Math.max(0, current + amount));
+      
+      // Add to icon display
+      const icon = statIcons[need] || '';
+      const changeStr = amount > 0 ? `+${amount}` : `${amount}`;
+      changeIcons.push(`${icon}(${changeStr})`);
     }
 
     console.log(`♻️  ${npc.name} recovered from ${activity}`);
+    
+    // Log activity changes with icons
+    if (changeIcons.length > 0 && messageCallback) {
+      messageCallback(npc.name, `Activity: ${changeIcons.join(' ')}`);
+    }
   }
 
   /**

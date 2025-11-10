@@ -28,6 +28,23 @@ import {
   shouldInterruptForCrisis 
 } from "./crisis-system";
 import { LocationCrisisSystem, CRISIS_ZONES } from "./location-crisis-system";
+import { 
+  ThreatSource, 
+  THREAT_SOURCES, 
+  getThreatsAtPosition,
+  calculatePositionSafety,
+  getThreatColor,
+  getThreatEmoji 
+} from "./threat-system";
+import {
+  Town,
+  TOWNS,
+  calculateTownSafety,
+  recalculateAllTownSafety,
+  getTownSafetySummary,
+  calculateNPCSafetyFromTown,
+  getNPCTown
+} from "./town-safety-system";
 
 // Simple runtime check for Tauri without type issues
 const isTauri =
@@ -117,6 +134,12 @@ class GameScene extends Phaser.Scene {
   
   // Testing mode - disable automatic need changes
   private testingMode: boolean = false;
+  
+  // Message logs for each NPC (last 12 messages)
+  // Game control
+  private gameRunning: boolean = false;
+  private hourlyTimer: Phaser.Time.TimerEvent | null = null;
+  private npcMessageLogs: Map<string, string[]> = new Map();
 
   // Resource system
   private resourceManager!: ResourceManager;
@@ -132,6 +155,13 @@ class GameScene extends Phaser.Scene {
   // Location crisis system
   private locationCrisisSystem!: LocationCrisisSystem;
   private crisisZoneGraphics: Phaser.GameObjects.Graphics[] = [];
+  
+  // Threat system visuals
+  private threatVisuals: Map<string, Phaser.GameObjects.Container> = new Map();
+  
+  // NPC movement tracking
+  private npcMovementTweens: Map<string, Phaser.Tweens.Tween> = new Map();
+  private npcWalkingSpeed: number = 50; // pixels per second
   private lastPlayerPosition: { x: number; y: number } = { x: -1, y: -1 };
   
   // Building graphics
@@ -182,6 +212,11 @@ class GameScene extends Phaser.Scene {
 
     // Create resource manager
     this.resourceManager = new ResourceManager();
+    
+    // Set up message callback for NPC logs
+    this.resourceManager.setMessageCallback((npcName: string, message: string) => {
+      this.addNPCMessage(npcName, message);
+    });
 
     // Create storage locations
     this.resourceManager.createStorage(
@@ -236,6 +271,16 @@ class GameScene extends Phaser.Scene {
     // Create location and cycle systems
     this.locationSystem = new LocationSystem();
     this.cycleSystem = new DailyCycleSystem(this.locationSystem);
+    
+    // Set up message callback for daily cycle system
+    this.cycleSystem.setMessageCallback((npcName: string, message: string) => {
+      this.addNPCMessage(npcName, message);
+    });
+    
+    // Set up movement callback for NPC walking animations
+    this.cycleSystem.setMovementCallback((npcName: string, toLocationId: string) => {
+      this.moveNPCToLocation(npcName, toLocationId);
+    });
 
     // Register mock NPCs with behavior system
     const mockNPCs = this.getMockData().npcs;
@@ -253,6 +298,13 @@ class GameScene extends Phaser.Scene {
         currentActivity: "idle",
         home: "",
         workplace: "",
+        // Spatial data will be set when locations are assigned
+        homeX: undefined,
+        homeY: undefined,
+        workX: undefined,
+        workY: undefined,
+        currentX: undefined,
+        currentY: undefined,
       };
 
       this.cycleSystem.registerNPC(behaviorNPC);
@@ -338,8 +390,8 @@ class GameScene extends Phaser.Scene {
     this.npcInfoPanel = this.add.container(20, 60);
     this.npcInfoPanel.setDepth(100);
 
-    // Background
-    const bg = this.add.rectangle(0, 0, 380, 400, 0x000000, 0.8);
+    // Background (height set to 800px for optimal message formatting)
+    const bg = this.add.rectangle(0, 0, 380, 800, 0x000000, 0.8);
     bg.setOrigin(0, 0);
     this.npcInfoPanel.add(bg);
 
@@ -434,6 +486,9 @@ class GameScene extends Phaser.Scene {
     // Update daily cycle system (handles checkpoints at 6, 12, 18, 22) - but only if not in testing mode
     if (!this.testingMode) {
       this.cycleSystem.onHourChange(currentHour);
+      
+      // Update NPC needs every hour (building effects + activity recovery)
+      this.cycleSystem.updateNPCNeeds();
     }
 
     // First, check what NPCs are thinking
@@ -469,10 +524,11 @@ class GameScene extends Phaser.Scene {
           !existingTask &&
           PRODUCTION_RECIPES[npc.occupation?.toLowerCase()]
         ) {
-          // Get NPC's current location and workplace from behavior system
+          // Get NPC's current location, workplace, and activity from behavior system
           const behaviorNPC = this.cycleSystem.getNPC(npc.name);
           const currentLocation = behaviorNPC?.currentLocation;
           const workplace = behaviorNPC?.workplace;
+          const currentActivity = behaviorNPC?.currentActivity;
 
           const task = this.resourceManager.startProduction(
             npc.name,
@@ -480,7 +536,8 @@ class GameScene extends Phaser.Scene {
             currentHour,
             "warehouse",
             currentLocation,
-            workplace
+            workplace,
+            currentActivity
           );
 
           if (task) {
@@ -527,6 +584,11 @@ class GameScene extends Phaser.Scene {
     console.log("⚠️ About to init location crisis system...");
     this.initLocationCrisisSystem();
     console.log("✅ Location crisis system initialized");
+    
+    // Initialize threat visualization
+    console.log("🎯 Initializing threat visualization...");
+    this.initThreatVisualization();
+    console.log("✅ Threat visualization initialized");
     
     // Initialize buildings FOURTH
     console.log("🏠 About to render buildings...");
@@ -616,16 +678,25 @@ class GameScene extends Phaser.Scene {
       }
     });
 
-    // Update world state every second
+    // Setup hourly game tick (3 seconds = 1 hour)
+    this.hourlyTimer = this.time.addEvent({
+      delay: 3000, // 3 seconds per hour
+      callback: () => this.hourlyTick(),
+      callbackScope: this,
+      loop: true,
+      paused: true, // Start paused
+    });
+
+    // Update display every second
     this.time.addEvent({
       delay: 1000,
-      callback: () => this.updateWorld(),
+      callback: () => this.updateDisplay(),
       callbackScope: this,
       loop: true,
     });
 
     // Initial load
-    this.updateWorld();
+    this.updateWorld(); // This loads the initial world data
   }
 
   createBackground() {
@@ -655,6 +726,13 @@ class GameScene extends Phaser.Scene {
       .setDepth(1000) // High depth so player is always on top
       .setTint(0x4444ff); // Blue tint to distinguish from NPCs
 
+    // Initialize player threat position
+    const playerThreat = THREAT_SOURCES.find(t => t.id === 'player_threat');
+    if (playerThreat) {
+      playerThreat.x = 800;
+      playerThreat.y = 500;
+    }
+
     // Set up keyboard controls
     this.cursors = this.input.keyboard!.createCursorKeys();
     const wasdKeys = this.input.keyboard!.addKeys("W,S,A,D") as {
@@ -680,49 +758,416 @@ class GameScene extends Phaser.Scene {
     // Position buttons at bottom-left
     const yPos = 900;
 
-    const startBtn = this.add
-      .text(20, yPos, "▶️ Start", {
+    const playPauseBtn = this.add
+      .text(20, yPos, this.gameRunning ? "⏸️ Pause" : "▶️ Start", {
         fontSize: "18px",
-        color: "#0f0",
+        color: this.gameRunning ? "#ff0" : "#0f0",
         backgroundColor: "#333",
         padding: { x: 10, y: 5 },
       })
       .setInteractive();
 
-    startBtn.on("pointerdown", async () => {
-      try {
-        if (isTauri) {
-          await callTauriCommand("start_simulation");
-          this.updateStatusBar();
-        } else {
-          console.log("ℹ️ Run: npm run dev");
+    playPauseBtn.on("pointerdown", () => {
+      this.gameRunning = !this.gameRunning;
+      playPauseBtn.setText(this.gameRunning ? "⏸️ Pause" : "▶️ Start");
+      playPauseBtn.setColor(this.gameRunning ? "#ff0" : "#0f0");
+      
+      // Control the hourly timer
+      if (this.hourlyTimer) {
+        this.hourlyTimer.paused = !this.gameRunning;
+      }
+      
+      console.log(this.gameRunning ? "🎮 Simulation started" : "⏸️ Simulation paused");
+    });
+  }
+
+  /**
+   * Hourly tick - advances game time by 1 hour
+   */
+  hourlyTick() {
+    if (!this.gameRunning || !this.worldData) return;
+
+    console.log(`\n⏰ === HOURLY TICK === Hour ${this.worldData.currentHour || 0} → ${(this.worldData.currentHour || 0) + 1}`);
+    
+    // Advance time by 1 hour
+    this.worldData.currentHour = (this.worldData.currentHour || 0) + 1;
+    
+    // Handle day change
+    if (this.worldData.currentHour >= 24) {
+      this.worldData.currentHour = 0;
+      this.worldData.currentDay = (this.worldData.currentDay || 1) + 1;
+      console.log(`📅 New day! Day ${this.worldData.currentDay}`);
+    }
+
+    // Update NPC behavior and needs
+    this.cycleSystem.onHourChange(this.worldData.currentHour);
+    this.cycleSystem.updateNPCNeeds();
+    
+    // Sync NPC stats from behavior system back to world data
+    this.syncNPCStats();
+    
+    // Calculate town-level safety (exclude player threat from base calculation)
+    const nonPlayerThreats = THREAT_SOURCES.filter(t => t.type !== 'player');
+    recalculateAllTownSafety(TOWNS, nonPlayerThreats);
+    console.log(`🏘️ Town Safety: ${getTownSafetySummary()}`);
+    
+    // Check NPCs for nearby threats AFTER sync to avoid overwriting
+    this.checkNPCsForThreats();
+    
+    // Update resource production
+    this.resourceManager.updateProduction(this.worldData.currentHour);
+    
+    // Update display
+    this.updateDisplay();
+  }
+
+  /**
+   * Sync NPC stats from behavior system to world data
+   */
+  syncNPCStats() {
+    if (!this.worldData?.npcs) return;
+
+    for (const worldNPC of this.worldData.npcs) {
+      const behaviorNPC = this.cycleSystem.getNPC(worldNPC.name);
+      if (behaviorNPC) {
+        // Sync all need values
+        worldNPC.needFood = behaviorNPC.needFood;
+        worldNPC.needSafety = behaviorNPC.needSafety;
+        worldNPC.needWealth = behaviorNPC.needWealth;
+        worldNPC.needSocial = behaviorNPC.needSocial;
+        worldNPC.needRest = behaviorNPC.needRest;
+        
+        // Also sync emotions if they exist in behavior NPC
+        if ('emotionHappiness' in behaviorNPC) {
+          worldNPC.emotionHappiness = behaviorNPC.emotionHappiness;
         }
-      } catch (e) {
-        console.error("Start error:", e);
+        if ('emotionFear' in behaviorNPC) {
+          worldNPC.emotionFear = behaviorNPC.emotionFear;
+        }
+        
+        // Update current displayed NPC if it matches
+        if (this.currentDisplayedNPC?.name === worldNPC.name) {
+          this.currentDisplayedNPC.needFood = behaviorNPC.needFood;
+          this.currentDisplayedNPC.needSafety = behaviorNPC.needSafety;
+          this.currentDisplayedNPC.needWealth = behaviorNPC.needWealth;
+          this.currentDisplayedNPC.needSocial = behaviorNPC.needSocial;
+          this.currentDisplayedNPC.needRest = behaviorNPC.needRest;
+          
+          if ('emotionHappiness' in behaviorNPC) {
+            this.currentDisplayedNPC.emotionHappiness = behaviorNPC.emotionHappiness;
+          }
+          if ('emotionFear' in behaviorNPC) {
+            this.currentDisplayedNPC.emotionFear = behaviorNPC.emotionFear;
+          }
+        }
+      }
+    }
+    
+    // Update the info display if we're viewing an NPC
+    this.updateNPCInfoDisplay();
+  }
+
+  /**
+   * Check if NPCs are near threat sources using distance-based calculation
+   * Now uses town-level safety as a baseline
+   */
+  checkNPCsForThreats() {
+    if (!this.worldData?.npcs) return;
+
+    // Check each NPC
+    for (const npc of this.worldData.npcs) {
+      const behaviorNPC = this.cycleSystem.getNPC(npc.name);
+      if (!behaviorNPC || behaviorNPC.currentX === undefined || behaviorNPC.currentY === undefined) continue;
+
+      // Get the NPC's town
+      const town = getNPCTown(behaviorNPC);
+      if (!town) continue;
+
+      // Calculate NPC safety based on town + individual proximity
+      const calculatedSafety = calculateNPCSafetyFromTown(behaviorNPC, town, THREAT_SOURCES);
+      
+      // Get immediate threats for logging
+      const threatsHere = getThreatsAtPosition(behaviorNPC.currentX, behaviorNPC.currentY, THREAT_SOURCES);
+      
+      // Apply the difference as safety change
+      const oldSafety = npc.needSafety !== undefined ? npc.needSafety : 85;
+      const safetyDiff = calculatedSafety - oldSafety;
+      
+      if (safetyDiff < 0) {
+        // Safety decreased due to threats
+        npc.needSafety = Math.max(0, calculatedSafety);
+        
+        if (threatsHere.length > 0) {
+          const worstThreat = threatsHere[0];
+          console.log(`⚠️ ${npc.name} affected by ${worstThreat.threat.name}! Safety: ${oldSafety} → ${npc.needSafety}`);
+          this.addNPCMessage(npc.name, `${getThreatEmoji(worstThreat.threat.type)} ${worstThreat.threat.type.replace('_', ' ')} nearby! 🛡️(${Math.round(safetyDiff)})`);
+        } else {
+          console.log(`⚠️ ${npc.name} feels unsafe in ${town.name}! Safety: ${oldSafety} → ${npc.needSafety}`);
+          this.addNPCMessage(npc.name, `Town danger affecting safety! 🛡️(${Math.round(safetyDiff)})`);
+        }
+        
+        // Update behavior system NPC too
+        if (behaviorNPC) {
+          behaviorNPC.needSafety = npc.needSafety;
+        }
+      } else if (npc.needSafety < 100) {
+        // Log if NPC is safe from immediate threats
+        console.log(`✅ ${npc.name} is safe from threats (Safety: ${npc.needSafety}%)`);
+      }
+    }
+  }
+
+  /**
+   * Get safety loss amount based on threat type
+   */
+  getThreatSafetyLoss(crisisType: string): number {
+    const threatLevels: Record<string, number> = {
+      'bandit': 30,    // High threat
+      'danger': 35,    // Highest threat
+      'plague': 20,    // Moderate threat
+      'haunted': 15,   // Low threat
+      'disaster': 25,  // Moderate-high threat
+    };
+    return threatLevels[crisisType] || 10;
+  }
+
+  /**
+   * Initialize threat visualization
+   */
+  initThreatVisualization(): void {
+    // Visualize threat sources
+    for (const threat of THREAT_SOURCES) {
+      if (!threat.active) continue;
+
+      const container = this.add.container(threat.x, threat.y);
+      
+      // Threat radius circle
+      const graphics = this.add.graphics();
+      graphics.lineStyle(2, getThreatColor(threat.type), 0.5);
+      graphics.fillStyle(getThreatColor(threat.type), 0.1);
+      graphics.strokeCircle(0, 0, threat.radius);
+      graphics.fillCircle(0, 0, threat.radius);
+      container.add(graphics);
+
+      // Threat icon (skip for player - they have their own sprite)
+      if (threat.type !== 'player') {
+        const icon = this.add.text(0, 0, getThreatEmoji(threat.type), {
+          fontSize: '24px'
+        }).setOrigin(0.5);
+        container.add(icon);
+      }
+
+      // Threat name (skip for player)
+      if (threat.type !== 'player') {
+        const label = this.add.text(0, threat.radius + 10, threat.name, {
+          fontSize: '12px',
+          color: '#ff6666',
+          stroke: '#000',
+          strokeThickness: 2
+        }).setOrigin(0.5);
+        container.add(label);
+      }
+
+      this.threatVisuals.set(threat.id, container);
+    }
+
+    // Visualize town boundaries
+    for (const town of TOWNS) {
+      const graphics = this.add.graphics();
+      const { color, alpha } = this.getTownVisualizationData(town);
+      
+      graphics.lineStyle(3, color, 0.8);
+      graphics.fillStyle(color, alpha);
+      graphics.strokeCircle(town.x, town.y, town.radius);
+      graphics.fillCircle(town.x, town.y, town.radius);
+
+      // Town label
+      this.add.text(town.x, town.y - town.radius - 10, town.name, {
+        fontSize: '16px',
+        color: '#fff',
+        stroke: '#000',
+        strokeThickness: 3,
+        fontStyle: 'bold'
+      }).setOrigin(0.5);
+    }
+  }
+
+  /**
+   * Move NPC to a new location with walking animation
+   */
+  moveNPCToLocation(npcName: string, toLocationId: string): void {
+    const npcVisual = this.npcSprites.get(npcName);
+    const behaviorNPC = this.cycleSystem.getNPC(npcName);
+    const toLocation = this.locationSystem.getLocation(toLocationId);
+    
+    if (!npcVisual || !toLocation || !behaviorNPC) return;
+
+    // Stop any existing movement tween for this NPC
+    const existingTween = this.npcMovementTweens.get(npcName);
+    if (existingTween) {
+      existingTween.stop();
+      this.npcMovementTweens.delete(npcName);
+    }
+
+    // Calculate distance and movement time
+    const startX = npcVisual.sprite.x;
+    const startY = npcVisual.sprite.y;
+    const distance = Math.sqrt(
+      Math.pow(toLocation.x - startX, 2) + 
+      Math.pow(toLocation.y - startY, 2)
+    );
+    const moveTime = (distance / this.npcWalkingSpeed) * 1000; // Convert to milliseconds
+
+    // Handle multiple NPCs at same location with slight offset
+    const npcsAtLocation = this.cycleSystem.getNPCsAtLocation(toLocationId);
+    const npcIndex = npcsAtLocation.findIndex((n) => n.name === npcName);
+    
+    let finalX = toLocation.x;
+    let finalY = toLocation.y;
+    
+    if (npcIndex > 0) {
+      const offsetAngle = (npcIndex / npcsAtLocation.length) * Math.PI * 2;
+      finalX += Math.cos(offsetAngle) * 30;
+      finalY += Math.sin(offsetAngle) * 30;
+    }
+
+    console.log(`🚶 ${npcName} walking to ${toLocation.name} (${Math.round(distance)}px, ${(moveTime/1000).toFixed(1)}s)`);
+
+    // Create walking tween
+    const walkTween = this.tweens.add({
+      targets: [
+        npcVisual.sprite,
+        npcVisual.nameText,
+        npcVisual.goalText,
+        npcVisual.emotionIcon,
+        npcVisual.barBg,
+        npcVisual.barFill
+      ],
+      x: finalX,
+      duration: moveTime,
+      ease: 'Power1',
+      onUpdate: () => {
+        // Update currentX for real-time threat calculations
+        if (behaviorNPC) {
+          behaviorNPC.currentX = npcVisual.sprite.x;
+        }
+        
+        // Adjust Y positions for non-sprite elements
+        npcVisual.nameText.y = npcVisual.sprite.y - 35;
+        if (npcVisual.goalText) npcVisual.goalText.y = npcVisual.sprite.y - 50;
+        if (npcVisual.emotionIcon) npcVisual.emotionIcon.y = npcVisual.sprite.y - 15;
+        npcVisual.barBg.y = npcVisual.sprite.y + 30;
+        npcVisual.barFill.y = npcVisual.sprite.y + 30;
+      },
+      onComplete: () => {
+        console.log(`✅ ${npcName} arrived at ${toLocation.name}`);
+        this.npcMovementTweens.delete(npcName);
+        
+        // Final position update
+        if (behaviorNPC) {
+          behaviorNPC.currentX = finalX;
+          behaviorNPC.currentY = finalY;
+        }
       }
     });
 
-    const stopBtn = this.add
-      .text(120, yPos, "⏸️ Stop", {
-        fontSize: "18px",
-        color: "#f00",
-        backgroundColor: "#333",
-        padding: { x: 10, y: 5 },
-      })
-      .setInteractive();
-
-    stopBtn.on("pointerdown", async () => {
-      try {
-        if (isTauri) {
-          await callTauriCommand("stop_simulation");
-          this.updateStatusBar();
-        } else {
-          console.log("ℹ️ Ctrl+C in terminal");
+    // Y movement tween (separate for proper positioning)
+    this.tweens.add({
+      targets: [npcVisual.sprite],
+      y: finalY,
+      duration: moveTime,
+      ease: 'Power1',
+      onUpdate: () => {
+        // Update currentY for real-time threat calculations
+        if (behaviorNPC) {
+          behaviorNPC.currentY = npcVisual.sprite.y;
         }
-      } catch (e) {
-        console.error("Stop error:", e);
       }
     });
+
+    this.npcMovementTweens.set(npcName, walkTween);
+  }
+
+  /**
+   * Get town visualization color based on safety
+   */
+  getTownVisualizationData(town: Town): { color: number; alpha: number } {
+    const safetyRatio = town.currentSafety / 100;
+    
+    // Green to red gradient based on safety
+    const red = Math.round(255 * (1 - safetyRatio));
+    const green = Math.round(255 * safetyRatio);
+    const color = (red << 16) + (green << 8);
+    
+    return {
+      color,
+      alpha: 0.2 + (0.3 * (1 - safetyRatio)) // More opaque when dangerous
+    };
+  }
+
+  /**
+   * Check player proximity threats in real-time
+   */
+  checkPlayerProximityThreats() {
+    if (!this.player || !this.worldData?.npcs || !this.gameRunning) return;
+
+    // Get player threat source
+    const playerThreat = THREAT_SOURCES.find(t => t.id === 'player_threat');
+    if (!playerThreat) return;
+
+    // Check each NPC
+    for (const npc of this.worldData.npcs) {
+      const behaviorNPC = this.cycleSystem.getNPC(npc.name);
+      if (!behaviorNPC || behaviorNPC.currentX === undefined || behaviorNPC.currentY === undefined) continue;
+
+      // Calculate distance to player
+      const distance = Math.sqrt(
+        Math.pow(behaviorNPC.currentX - this.player.x, 2) + 
+        Math.pow(behaviorNPC.currentY - this.player.y, 2)
+      );
+
+      // Check if within player threat radius
+      if (distance <= playerThreat.radius) {
+        // Calculate threat impact
+        const proximityFactor = 1 - (distance / playerThreat.radius);
+        const threatImpact = playerThreat.severity * Math.pow(proximityFactor, 2);
+        
+        // Apply gradual safety loss (per second)
+        const deltaTime = this.game.loop.delta / 1000;
+        const safetyLoss = threatImpact * 0.1 * deltaTime; // 10% of impact per second
+        
+        const oldSafety = npc.needSafety !== undefined ? npc.needSafety : 85;
+        npc.needSafety = Math.max(0, oldSafety - safetyLoss);
+        
+        // Update behavior system NPC too
+        if (behaviorNPC) {
+          behaviorNPC.needSafety = npc.needSafety;
+        }
+        
+        // Log significant changes (every 5% drop)
+        if (Math.floor(oldSafety / 5) > Math.floor(npc.needSafety / 5)) {
+          console.log(`⚠️ ${npc.name} scared by player proximity! Safety: ${oldSafety.toFixed(0)} → ${npc.needSafety.toFixed(0)}`);
+          this.addNPCMessage(npc.name, `👤 Stranger too close! 🛡️(-${Math.round(oldSafety - npc.needSafety)})`);
+        }
+        
+        // Update displayed NPC if it's this one
+        if (this.currentDisplayedNPC?.name === npc.name) {
+          this.currentDisplayedNPC.needSafety = npc.needSafety;
+        }
+      }
+    }
+    
+    // Update the info display if we're viewing an NPC
+    if (this.currentDisplayedNPC) {
+      this.updateNPCInfoDisplay();
+    }
+  }
+
+  /**
+   * Update display only (called every second)
+   */
+  updateDisplay() {
+    this.renderWorld();
   }
 
   async updateWorld() {
@@ -772,9 +1217,9 @@ class GameScene extends Phaser.Scene {
         },
         {
           name: "Sarah",
-          occupation: "Merchant",
+          occupation: "Herbalist",
           needFood: 44,
-          needSafety: 15,  // HIGH danger crisis (was 80)
+          needSafety: 85,  // Normal safety level
           needWealth: 5,   // Poverty crisis (was 40)
           emotionHappiness: 24,
           emotionFear: 0,
@@ -786,7 +1231,7 @@ class GameScene extends Phaser.Scene {
           needFood: 73,
           needSafety: 85,
           needWealth: 55,
-          emotionHappiness: 10,  // Emotional breakdown crisis (was 25)
+          emotionHappiness: 65,  // Restored to normal levels
           emotionFear: 0,
           goals: [],
         },
@@ -831,8 +1276,9 @@ class GameScene extends Phaser.Scene {
       let x = centerX + Math.cos(angle) * radius;
       let y = centerY + Math.sin(angle) * radius;
 
-      // Use location if available
-      if (behaviorNPC) {
+      // Use location if available, but only for initial placement
+      if (behaviorNPC && !this.npcSprites.has(npc.name)) {
+        // Only set initial position for new NPCs
         const location = this.locationSystem.getLocation(
           behaviorNPC.currentLocation
         );
@@ -850,10 +1296,15 @@ class GameScene extends Phaser.Scene {
             // Spread multiple NPCs in a small circle around the building
             const offsetAngle =
               (npcIndex / npcsAtLocation.length) * Math.PI * 2;
-            x += Math.cos(offsetAngle) * 30; // Reduced from 80 to 30
+            x += Math.cos(offsetAngle) * 30;
             y += Math.sin(offsetAngle) * 30;
           }
         }
+      } else if (behaviorNPC && this.npcSprites.has(npc.name)) {
+        // Use current visual position for existing NPCs (don't snap)
+        const existingVisual = this.npcSprites.get(npc.name)!;
+        x = existingVisual.sprite.x;
+        y = existingVisual.sprite.y;
       }
 
       let npcVisual = this.npcSprites.get(npc.name);
@@ -1058,6 +1509,8 @@ class GameScene extends Phaser.Scene {
         text: opt.text,
         callback: () => this.handleCrisisResponse(npc, opt.action, crisis)
       }));
+      // Always add Show NPC Info option even in crisis
+      options.push({ text: "Show NPC Info", callback: () => { this.closeConversation(); this.showNPCInfo(npc); } });
     } else {
       // Normal dialogue options
       options = [
@@ -1232,6 +1685,9 @@ class GameScene extends Phaser.Scene {
     // Track which NPC we're currently displaying
     this.currentDisplayedNPC = npc;
     
+    // Add a test message for demonstration
+    this.addNPCMessage(npc.name, "Player viewed my info");
+    
     // Generate and display the info
     this.updateNPCInfoDisplay();
   }
@@ -1256,8 +1712,8 @@ class GameScene extends Phaser.Scene {
     if (this.npcInfoPanel) {
       this.npcInfoPanel.removeAll(true);
       
-      // Background
-      const bg = this.add.rectangle(0, 0, 380, 600, 0x000000, 0.8);
+      // Background (increased height to accommodate 12 messages + other info)
+      const bg = this.add.rectangle(0, 0, 380, 900, 0x000000, 0.8);
       bg.setOrigin(0, 0);
       this.npcInfoPanel.add(bg);
 
@@ -1297,6 +1753,18 @@ class GameScene extends Phaser.Scene {
         });
         this.npcInfoPanel.add(activityText);
         yPos += 20;
+
+        // Show other NPCs at same location
+        const otherNPCs = this.cycleSystem.getNPCsAtLocation(behaviorNPC.currentLocation)
+          .filter(n => n.name !== npc.name);
+        if (otherNPCs.length > 0) {
+          const companionText = this.add.text(10, yPos, `👥 With: ${otherNPCs.map(n => n.name).join(', ')}`, {
+            fontSize: "13px",
+            color: "#88ff88"
+          });
+          this.npcInfoPanel.add(companionText);
+          yPos += 20;
+        }
       }
 
       // Show current production task or production status
@@ -1454,6 +1922,60 @@ class GameScene extends Phaser.Scene {
         this.createStatRow(emotion.key, emotion.icon, emotion.label, npc[emotion.key], 10, yPos);
         yPos += 30;
       }
+
+      // Message log section
+      yPos += 10;
+      const messagesTitle = this.add.text(10, yPos, "💬 Recent Messages:", {
+        fontSize: "14px",
+        color: "#fff",
+        fontStyle: "bold"
+      });
+      this.npcInfoPanel.add(messagesTitle);
+      yPos += 25;
+
+      // Get messages for this NPC
+      const messages = this.npcMessageLogs.get(npc.name) || [];
+      if (messages.length === 0) {
+        const noMessages = this.add.text(10, yPos, "   (No messages yet)", {
+          fontSize: "12px",
+          color: "#888",
+          fontStyle: "italic"
+        });
+        this.npcInfoPanel.add(noMessages);
+        yPos += 20;
+      } else {
+        for (const message of messages) {
+          const messageText = this.add.text(10, yPos, `   ${message}`, {
+            fontSize: "11px",
+            color: "#ccccaa",
+            wordWrap: { width: 350 }
+          });
+          this.npcInfoPanel.add(messageText);
+          yPos += 18;
+        }
+      }
+    }
+  }
+
+  // Add a message to an NPC's message log
+  addNPCMessage(npcName: string, message: string): void {
+    if (!this.npcMessageLogs.has(npcName)) {
+      this.npcMessageLogs.set(npcName, []);
+    }
+    
+    const messages = this.npcMessageLogs.get(npcName)!;
+    const timestamp = `${String(this.worldData?.currentHour || 0).padStart(2, '0')}:00`;
+    const timestampedMessage = `[${timestamp}] ${message}`;
+    
+    // Add to the beginning and keep only last 12
+    messages.unshift(timestampedMessage);
+    if (messages.length > 12) {
+      messages.splice(12);
+    }
+    
+    // If this NPC is currently displayed, refresh the UI
+    if (this.currentDisplayedNPC?.name === npcName) {
+      this.generateNPCInfoText(this.currentDisplayedNPC);
     }
   }
 
@@ -1736,6 +2258,20 @@ class GameScene extends Phaser.Scene {
         this.player.y = newY;
       }
       
+      // Update player threat source position
+      const playerThreat = THREAT_SOURCES.find(t => t.id === 'player_threat');
+      if (playerThreat) {
+        playerThreat.x = this.player.x;
+        playerThreat.y = this.player.y;
+        
+        // Update visual if it exists
+        const playerThreatVisual = this.threatVisuals.get('player_threat');
+        if (playerThreatVisual) {
+          playerThreatVisual.x = this.player.x;
+          playerThreatVisual.y = this.player.y;
+        }
+      }
+      
       // Check if player entered a crisis zone
       if (this.locationCrisisSystem && (this.player.x !== this.lastPlayerPosition.x || this.player.y !== this.lastPlayerPosition.y)) {
         const crisisEvent = this.locationCrisisSystem.checkPlayerInCrisisZone(this.player.x, this.player.y);
@@ -1786,6 +2322,9 @@ class GameScene extends Phaser.Scene {
         
         this.lastPlayerPosition = { x: this.player.x, y: this.player.y };
       }
+      
+      // Real-time player proximity threat check
+      this.checkPlayerProximityThreats();
     }
   }
   

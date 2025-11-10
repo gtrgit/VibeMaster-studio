@@ -1,0 +1,16 @@
+
+> vibemaster@1.0.0 tauri:dev
+> tauri dev
+
+     Running BeforeDevCommand (`npm run vite:dev`)
+
+> vibemaster@1.0.0 vite:dev
+> vite
+
+
+  VITE v7.1.12  ready in 754 ms
+
+  ➜  Local:   http://localhost:5174/
+     Running DevCommand (`cargo  run --no-default-features --color always --`)
+        Info Watching /mnt/c/Users/grant/projects/VibeMaster-studio/src-tauri for changes...
+       Error The "beforeDevCommand" terminated with a non-zero status code.

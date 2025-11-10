@@ -223,6 +223,11 @@ export interface ProductionTask {
 export class ResourceManager {
   private storages: Map<string, ResourceStorage> = new Map();
   private productionTasks: ProductionTask[] = [];
+  private messageCallback?: (npcName: string, message: string) => void;
+
+  setMessageCallback(callback: (npcName: string, message: string) => void): void {
+    this.messageCallback = callback;
+  }
 
   createStorage(
     id: string,
@@ -254,11 +259,23 @@ export class ResourceManager {
     currentHour: number,
     storageId?: string,
     npcLocation?: string,
-    npcWorkplace?: string
+    npcWorkplace?: string,
+    npcActivity?: string
   ): ProductionTask | null {
     const occupationLower = occupation?.toLowerCase();
 
     console.log(`\n💭 ${npcName} (${occupation}) is thinking...`);
+
+    // Check if NPC is actually working (not resting, socializing, etc.)
+    if (npcActivity && npcActivity !== "working") {
+      console.log(`   ❌ Cannot work! Currently ${npcActivity}.`);
+      console.log(`   💡 Must be actively working to produce goods!`);
+      
+      // Log message for UI
+      this.messageCallback?.(npcName, `Cannot work! Currently ${npcActivity}`);
+      
+      return null;
+    }
 
     // Check if NPC is at their workplace
     if (npcLocation && npcWorkplace && npcLocation !== npcWorkplace) {
@@ -266,6 +283,10 @@ export class ResourceManager {
       console.log(`   📍 Current location: ${npcLocation}`);
       console.log(`   🏭 Workplace: ${npcWorkplace}`);
       console.log(`   💡 Must be at workplace to produce goods!`);
+      
+      // Log message for UI
+      this.messageCallback?.(npcName, "Cannot work! Not at workplace");
+      
       return null;
     }
 
@@ -277,6 +298,10 @@ export class ResourceManager {
         `   Available occupations:`,
         Object.keys(PRODUCTION_RECIPES).join(", ")
       );
+      
+      // Log message for UI
+      this.messageCallback?.(npcName, `No recipe for occupation "${occupation}"`);
+      
       return null;
     }
 
@@ -326,6 +351,7 @@ export class ResourceManager {
 
       if (!hasAllMaterials) {
         console.log(`   ⛔ Cannot start: Missing materials!`);
+        this.messageCallback?.(npcName, "Cannot start: Missing materials!");
         return null;
       }
 
@@ -368,6 +394,9 @@ export class ResourceManager {
     console.log(
       `   ✅ Started! Will complete at hour ${task.endHour} (in ${recipe.timeHours}h)`
     );
+    
+    // Log message for UI
+    this.messageCallback?.(npcName, `Started making ${recipe.amount}x ${recipe.produces}`);
 
     return task;
   }
@@ -401,6 +430,9 @@ export class ResourceManager {
             RESOURCE_INFO[task.resource].emoji
           }`
         );
+        
+        // Log message for UI
+        this.messageCallback?.(task.npcName, `Completed: ${task.amount}x ${task.resource}`);
 
         // Add resources to storage
         if (task.storageId) {

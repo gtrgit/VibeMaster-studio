@@ -15,6 +15,7 @@
     "tauri:build": "tauri build",
     "dev:all": "concurrently \"npm run dev:server\" \"npm run dev\" \"npm run tauri:dev\"",
     "dev:browser": "concurrently \"npm run dev:server\" \"npm run vite:dev\"",
+    "check:tauri": "./check-tauri.sh",
     "db:generate": "npx prisma generate",
     "db:migrate": "npx prisma migrate dev",
     "db:studio": "npx prisma studio",

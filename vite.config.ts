@@ -5,7 +5,7 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: true,
-    host: 'localhost',
+    host: '0.0.0.0', // Allow access from Windows to WSL
   },
   build: {
     outDir: 'dist',
